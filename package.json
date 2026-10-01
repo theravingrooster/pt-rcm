@@ -1,20 +1,18 @@
 {
-  "name": "claimguard",
-  "version": "0.1.0",
+  "name": "pt-rcm",
   "private": true,
-  "description": "ClaimGuard starter for Codex Cloud tasks",
-  "type": "module",
-  "scripts": {
-    "check": "tsc --noEmit",
-    "test": "node --test",
-    "build": "tsc",
-    "start": "node dist/index.js"
-  },
-  "devDependencies": {
-    "typescript": "^5.6.3",
-    "@types/node": "^22.10.0"
-  },
+  "version": "0.0.0",
+  "description": "Outpatient PT billing rules prototype. Synthetic data, fixture clearinghouse, no live claims.",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "test": "pnpm -r test",
+    "lint": "pnpm -r --if-present lint",
+    "typecheck": "pnpm -r typecheck",
+    "dev": "pnpm --filter @pt-rcm/web dev",
+    "db:generate": "pnpm --filter @pt-rcm/db generate",
+    "db:migrate": "pnpm --filter @pt-rcm/db migrate"
   }
 }

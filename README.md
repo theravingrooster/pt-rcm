@@ -1,20 +1,25 @@
-# ClaimGuard
+# pt-rcm
 
-Starter repository for Codex Cloud. The GitHub repo was created empty, so this commit exists to give Codex a real `main` branch to clone.
+Outpatient physical therapy billing rules prototype. Synthetic data only. Fixture clearinghouse. No live claims.
 
-## What this is
+Medicare plus one synthetic commercial payer. Professional claims only. The 8-minute rule, GP, KX, plan of care, and auth checks are the product. This repo does not submit to a payer.
 
-A minimal TypeScript project. It does not contain claim data, credentials, or production logic yet. Use a Codex cloud task to build the actual product on top of this seed.
-
-## Local setup
+## Setup
 
 ```bash
-npm install
-npm run check
-npm test
-npm run build
+pnpm install
+docker compose up -d
+pnpm db:migrate
+pnpm test
+pnpm dev
 ```
 
-## Codex Cloud
+Node 22. Package manager is pnpm. Do not use the old ClaimGuard npm scripts.
 
-After this commit, rerun environment setup in Codex and publish again. The previous environment was published against an empty repository.
+## What this does not do
+
+- Live 837 submission
+- Eligibility against real payers
+- Redistribution of the AMA CPT data file
+- Institutional claims
+- Medical-necessity review
