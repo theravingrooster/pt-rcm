@@ -22,7 +22,7 @@ const patient: d.Patient = {
 };
 const encounter: d.Encounter = {
   id: encounterId, organizationId, externalId: "SYN-TEST-ENCOUNTER", patientId,
-  renderingProviderId, facilityId: seedFacility.id, dateOfService: "2026-10-01", status: "DRAFT",
+  renderingProviderId, facilityId: seedFacility.id, dateOfService: "2026-10-01", status: "DRAFT", authorizationId: null,
 };
 const claim: d.Claim = {
   id: claimId, encounterId, version: 1, status: "DRAFT", payerId,

@@ -31,6 +31,20 @@ jobs:
           pnpm db:seed
       - run: pnpm typecheck
       - run: pnpm test
+      - name: Build the Next.js app
+        run: pnpm --filter @pt-rcm/web build
+      - name: Ingest the synthetic demo through HTTP twice
+        run: |
+          pnpm --filter @pt-rcm/web exec next start > /tmp/pt-rcm-web.log 2>&1 &
+          web_pid=$!
+          trap 'kill "$web_pid" || true; cat /tmp/pt-rcm-web.log' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://localhost:3000/api/health > /dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://localhost:3000/api/health
+          pnpm seed:demo
+          pnpm seed:demo
       - name: Check migration drift
         run: |
           pnpm db:generate

@@ -1,0 +1,31 @@
+{
+  "externalId": "SYN-SHOULDER-23MIN",
+  "patient": {
+    "externalId": "SYN-PATIENT-SHOULDER",
+    "name": { "firstName": "SYN", "lastName": "Shoulder Demo" },
+    "dob": "2000-01-01",
+    "sex": "U",
+    "address": {
+      "line1": "1 SYN Test Way",
+      "line2": null,
+      "city": "SYN City",
+      "state": "CA",
+      "postalCode": "00000",
+      "country": "US"
+    },
+    "coverage": {
+      "payerCode": "MEDICARE",
+      "memberId": "SYN-MEMBER-SHOULDER",
+      "relationship": "SELF"
+    }
+  },
+  "renderingProviderNpi": "0000000003",
+  "facilityId": "00000000-0000-4000-8000-000000000002",
+  "dateOfService": "2026-10-01",
+  "diagnoses": ["M25.511"],
+  "minuteLines": [
+    { "cptCode": "97110", "minutes": 15 },
+    { "cptCode": "97140", "minutes": 8 }
+  ],
+  "planOfCare": { "signedDate": "2026-09-25", "certifyingNpi": "0000000004" }
+}

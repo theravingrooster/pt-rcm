@@ -99,11 +99,12 @@ export const coverages = pgTable("coverages", {
   patientId: uuid("patient_id").notNull().references(() => patients.id),
   payerId: uuid("payer_id").notNull().references(() => payers.id),
   memberId: text("member_id").notNull(),
-  groupNumber: text("group_number").notNull(),
+  groupNumber: text("group_number"),
   subscriberRelationship: subscriberRelationship("subscriber_relationship").notNull(),
-  planName: text("plan_name").notNull(),
+  planName: text("plan_name"),
   active: boolean("active").notNull(),
 }, (t) => [
+  unique("coverages_patient_payer_unique").on(t.patientId, t.payerId),
   index("coverages_patient_idx").on(t.patientId),
   index("coverages_payer_idx").on(t.payerId),
   check("coverages_synthetic_member_id", sql`${t.memberId} ~ '^SYN[A-Za-z0-9-]+$'`),
@@ -118,6 +119,7 @@ export const encounters = pgTable("encounters", {
   facilityId: uuid("facility_id").notNull(),
   dateOfService: date("date_of_service", { mode: "string" }).notNull(),
   status: encounterStatus("status").notNull(),
+  authorizationId: uuid("authorization_id").references(() => authorizations.id),
 }, (t) => [
   unique("encounters_org_external_id_unique").on(t.organizationId, t.externalId),
   foreignKey({ name: "encounters_patient_org_fk", columns: [t.patientId, t.organizationId], foreignColumns: [patients.id, patients.organizationId] }),
@@ -175,7 +177,7 @@ export const plansOfCare = pgTable("plans_of_care", {
   patientId: uuid("patient_id").notNull().references(() => patients.id),
   signedDate: date("signed_date", { mode: "string" }).notNull(),
   certifyingNpi: text("certifying_npi").notNull(),
-  expiresOn: date("expires_on", { mode: "string" }).notNull(),
+  expiresOn: date("expires_on", { mode: "string" }),
 }, (t) => [
   index("plans_of_care_patient_idx").on(t.patientId),
   check("plans_of_care_synthetic_npi", sql`${t.certifyingNpi} ~ '^000[0-9]{7}$'`),

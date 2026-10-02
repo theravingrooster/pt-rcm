@@ -15,6 +15,7 @@
     "dev": "pnpm --filter @pt-rcm/web dev",
     "db:generate": "pnpm --filter @pt-rcm/db generate",
     "db:migrate": "pnpm --filter @pt-rcm/db migrate",
-    "db:seed": "pnpm --filter @pt-rcm/db seed"
+    "db:seed": "pnpm --filter @pt-rcm/db seed",
+    "seed:demo": "pnpm --filter @pt-rcm/web seed:demo"
   }
 }

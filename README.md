@@ -25,9 +25,11 @@ pnpm test
 TEST_DATABASE_URL=postgres://pt:pt@localhost:5432/pt_rcm pnpm --filter @pt-rcm/db test
 pnpm typecheck
 pnpm dev
+# In another terminal, with the web server running:
+pnpm seed:demo
 ```
 
-Parse inputs with the schemas exported by `@pt-rcm/domain` before persistence. Generate migrations with `pnpm db:generate`. `DATABASE_URL` overrides the local Compose connection. The seed is idempotent and adds no patients. Database integration tests require `TEST_DATABASE_URL` and roll back their clinical fixtures.
+Parse inputs with the schemas exported by `@pt-rcm/domain` before persistence. Generate migrations with `pnpm db:generate`. `DATABASE_URL` overrides the local Compose connection. The seed is idempotent and adds no patients. Database integration tests require `TEST_DATABASE_URL` and clean up their own synthetic clinical fixtures. The demo loader calls `POST /api/encounters`; see [the ingest contract](docs/encounter-ingest.md).
 
 ## What this does not do
 

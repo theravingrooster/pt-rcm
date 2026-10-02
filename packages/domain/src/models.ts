@@ -96,8 +96,8 @@ export type Patient = z.infer<typeof PatientSchema>;
 
 export const CoverageSchema = z.object({
   id: IdSchema, patientId: IdSchema, payerId: IdSchema, memberId: MemberIdSchema,
-  groupNumber: NonEmptyString, subscriberRelationship: SubscriberRelationshipSchema,
-  planName: NonEmptyString, active: z.boolean(),
+  groupNumber: NonEmptyString.nullable(), subscriberRelationship: SubscriberRelationshipSchema,
+  planName: NonEmptyString.nullable(), active: z.boolean(),
 }).strict();
 export type Coverage = z.infer<typeof CoverageSchema>;
 
@@ -110,7 +110,7 @@ export type Payer = z.infer<typeof PayerSchema>;
 export const EncounterSchema = z.object({
   id: IdSchema, organizationId: IdSchema, externalId: NonEmptyString, patientId: IdSchema,
   renderingProviderId: IdSchema, facilityId: IdSchema, dateOfService: IsoDateSchema,
-  status: EncounterStatusSchema,
+  status: EncounterStatusSchema, authorizationId: IdSchema.nullable().default(null),
 }).strict();
 export type Encounter = z.infer<typeof EncounterSchema>;
 
@@ -138,8 +138,8 @@ export type Authorization = z.infer<typeof AuthorizationSchema>;
 
 export const PlanOfCareSchema = z.object({
   id: IdSchema, patientId: IdSchema, signedDate: IsoDateSchema,
-  certifyingNpi: NpiSchema, expiresOn: IsoDateSchema,
-}).strict().refine((value) => value.expiresOn >= value.signedDate, {
+  certifyingNpi: NpiSchema, expiresOn: IsoDateSchema.nullable(),
+}).strict().refine((value) => value.expiresOn === null || value.expiresOn >= value.signedDate, {
   message: "expiresOn must be on or after signedDate", path: ["expiresOn"],
 });
 export type PlanOfCare = z.infer<typeof PlanOfCareSchema>;

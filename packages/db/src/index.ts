@@ -3,6 +3,7 @@ import postgres from "postgres";
 import * as schema from "./schema.js";
 
 export * from "./schema.js";
+export * from "./encounter-ingest.js";
 
 // Importing the package does not open a connection or contact a clearinghouse.
 export function createDatabase(url: string) {

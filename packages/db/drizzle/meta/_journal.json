@@ -15,6 +15,13 @@
       "when": 1790901680164,
       "tag": "0001_allow_hcpcs_fixture_codes",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790902766675,
+      "tag": "0002_encounter_ingest",
+      "breakpoints": true
     }
   ]
 }
