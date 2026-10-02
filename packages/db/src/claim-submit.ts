@@ -1,9 +1,9 @@
 import { and, desc, eq } from "drizzle-orm";
-import { ClaimNotSubmittable, IdSchema, JsonObjectSchema, transitionClaim } from "@pt-rcm/domain";
+import { ClaimNotSubmittable, CoverageSchema, IdSchema, JsonObjectSchema, transitionClaim } from "@pt-rcm/domain";
 import type { ClearinghousePort } from "@pt-rcm/clearinghouse";
 import type { Database } from "./index.js";
 import { ClaimDocumentReadError, readClaimDocument } from "./claim-document.js";
-import { encounterSourceFingerprint } from "./encounter-source.js";
+import { encounterSourceFingerprint, sameEligibilityCheck } from "./encounter-source.js";
 import * as s from "./schema.js";
 
 export class ClaimSubmissionError extends Error {
@@ -44,11 +44,14 @@ export async function submitScrubbedClaim(db: Database, organizationId: string, 
     if (encounter.status === "CLAIMED" || siblings.some((row) => !preSubmission.has(row.status))) {
       throw new ClaimSubmissionError(409, "CLAIM_ALREADY_SUBMITTED", "This encounter already has a submitted claim");
     }
-    const coverage = await tx.select().from(s.coverages).where(and(eq(s.coverages.patientId, encounter.patientId), eq(s.coverages.active, true)));
+    const coverage = await tx.select().from(s.coverages).where(and(eq(s.coverages.patientId, encounter.patientId), eq(s.coverages.active, true))).for("share");
     const minuteLines = await tx.select().from(s.encounterMinuteLines).where(eq(s.encounterMinuteLines.encounterId, encounter.id))
       .orderBy(s.encounterMinuteLines.cptCode, s.encounterMinuteLines.id);
     const diagnoses = await tx.select().from(s.diagnoses).where(eq(s.diagnoses.encounterId, encounter.id)).orderBy(s.diagnoses.pointer);
-    if (coverage.length !== 1 || claim.snapshotJson.sourceFingerprint !== encounterSourceFingerprint(encounter, coverage[0]!, minuteLines, diagnoses)) {
+    const savedCoverage = CoverageSchema.safeParse(claim.snapshotJson.coverage);
+    if (coverage.length !== 1 || !savedCoverage.success
+      || claim.snapshotJson.sourceFingerprint !== encounterSourceFingerprint(encounter, coverage[0]!, minuteLines, diagnoses)
+      || !sameEligibilityCheck(savedCoverage.data, coverage[0]!)) {
       throw new ClaimSubmissionError(409, "CLAIM_NEEDS_SCRUB", "Encounter inputs changed; scrub the current draft before submission");
     }
     await tx.select({ id: s.claimLines.id }).from(s.claimLines).where(eq(s.claimLines.claimId, claimId)).for("update");

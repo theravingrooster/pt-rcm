@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { allocateUnits, fixtureLineChargeCents, getCptFixture, loadMedicareMinuteLadder } from "@pt-rcm/domain";
 import { applyDowngrades, runRules, toRuleFireRows } from "./index.js";
-import { authVisitsRule, distinctProcedureRule, eightMinuteAppliedRule, evalWithTreatmentRule, gpModifierRule, kxThresholdRule, planOfCareRule, ptPack, timedCodeCapRule, zeroMinuteTimedRule } from "./ptPack.js";
+import { authVisitsRule, coverageInactiveRule, distinctProcedureRule, eightMinuteAppliedRule, evalWithTreatmentRule, gpModifierRule, kxThresholdRule, planOfCareRule, ptPack, timedCodeCapRule, zeroMinuteTimedRule } from "./ptPack.js";
 import { makeContext, testClaimId } from "./testing/fixtures.js";
 import type { RuleContext } from "./types.js";
 
@@ -20,6 +20,26 @@ function context(lines: Line[] = [{ cptCode: "97110", minutes: 20 }, { cptCode: 
     payer: { ...base.payer, payerType: "MEDICARE", requiresGpModifier: true }, yearToDateBilledCents: 0,
     planOfCare: { id: testClaimId, patientId: base.encounter.patientId, signedDate: "2026-09-25", certifyingNpi: "0000000004", expiresOn: null } };
 }
+
+describe("coverage-inactive", () => {
+  it.each([
+    { checkedAt: null, eligible: null, outcome: "FLAG", code: "ELIGIBILITY_NOT_RUN", submits: true },
+    { checkedAt: "2026-10-02T11:59:59.000Z", eligible: false, outcome: "BLOCK", code: "COVERAGE_INACTIVE", submits: false },
+    { checkedAt: "2026-09-25T12:00:01.000Z", eligible: false, outcome: "BLOCK", code: "COVERAGE_INACTIVE", submits: false },
+    { checkedAt: "2026-09-25T12:00:00.000Z", eligible: false, outcome: "FLAG", code: "ELIGIBILITY_STALE", submits: true },
+    { checkedAt: "2026-09-20T12:00:00.000Z", eligible: false, outcome: "FLAG", code: "ELIGIBILITY_STALE", submits: true },
+    { checkedAt: "2026-10-02T12:00:01.000Z", eligible: false, outcome: "FLAG", code: "ELIGIBILITY_STALE", submits: true },
+    { checkedAt: "2026-10-02T11:00:00.000Z", eligible: true, outcome: "PASS", code: undefined, submits: true },
+  ] as const)("eligibility $eligible checked at $checkedAt produces $outcome", ({ checkedAt, eligible, outcome, code, submits }) => {
+    const base = context();
+    const ctx = { ...base, coverage: { ...base.coverage!, checkedAt, eligible, planActive: eligible } };
+    const before = structuredClone(ctx);
+    const run = runRules([coverageInactiveRule], ctx);
+    expect(run.findings[0]).toMatchObject(code ? { outcome, code } : { outcome });
+    expect(run.submissionAllowed).toBe(submits);
+    expect(ctx).toEqual(before);
+  });
+});
 
 describe("gp-modifier", () => {
   it.each(["97161", "97162", "97163", "97110", "97112", "97140", "97530", "97535"])("adds only GP to %s without changing clinical facts or units", (cptCode) => {

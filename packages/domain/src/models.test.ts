@@ -78,6 +78,14 @@ describe.each(cases)("$name", ({ schema, valid, invalid }) => {
 });
 
 describe("shared value schemas", () => {
+  it("defaults unchecked coverage eligibility to null and validates cached values", () => {
+    const unchecked = d.CoverageSchema.parse(cases.find(({ name }) => name === "Coverage")!.valid);
+    expect(unchecked).toMatchObject({ eligible: null, checkedAt: null, deductibleRemainingCents: null, planActive: null });
+    const checked = { ...unchecked, eligible: false, checkedAt: "2026-10-02T12:00:00.000Z", deductibleRemainingCents: 12500, planActive: false };
+    expect(d.CoverageSchema.parse(checked)).toEqual(checked);
+    expect(d.CoverageSchema.safeParse({ ...checked, deductibleRemainingCents: 12.5 }).success).toBe(false);
+    expect(d.CoverageSchema.safeParse({ ...checked, checkedAt: "2026-10-02T05:00:00-07:00" }).success).toBe(false);
+  });
   it("defaults facility POS to 11 without inventing clinical data", () => {
     expect(d.ServiceFacilitySchema.parse(cases[1]!.valid).placeOfServiceCode).toBe("11");
   });

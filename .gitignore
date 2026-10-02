@@ -5,5 +5,7 @@ node_modules
 next-env.d.ts
 dist
 coverage
+!apps/web/app/api/coverage/
+!apps/web/app/api/coverage/**
 .turbo
 *.tsbuildinfo

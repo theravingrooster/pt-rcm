@@ -17,12 +17,14 @@ export function makeContext(mode: RuleContext["mode"] = "active"): RuleContext {
   ];
   const allocatedUnits = allocateUnits(minuteLines, loadMedicareMinuteLadder());
   return {
+    evaluationTime: "2026-10-02T12:00:00.000Z",
     encounter, minuteLines, allocatedUnits,
     draftClaim: { encounterId: encounter.id, lines: allocatedUnits.lines.map(({ cptCode, minutes, units }) => ({ cptCode, minutes, units, modifiers: [], diagnosisPointers: [0] })) },
     claimChargeCents: 13500,
     coverage: {
       id: id("8"), patientId: encounter.patientId, payerId: id("9"), memberId: "SYN-RULES-MEMBER",
       groupNumber: null, planName: null, subscriberRelationship: "SELF", active: true,
+      eligible: null, checkedAt: null, deductibleRemainingCents: null, planActive: null,
     },
     payer: { id: id("9"), name: "SYN Test Payer", payerType: "COMMERCIAL", stediPayerId: null, requiresGpModifier: false },
     authorizations: [], planOfCare: null, yearToDateBilledCents: 240000, mode,

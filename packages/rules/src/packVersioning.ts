@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ptPack, timedCodeCapRule } from "./ptPack.js";
+import { coverageInactiveRule, ptPack, timedCodeCapRule } from "./ptPack.js";
 import type { Rule } from "./types.js";
 
 export type VersionedRulePack = Readonly<{
@@ -22,6 +22,10 @@ export function copyRulePackToShadow(source: Pick<VersionedRulePack, "id" | "ver
 // comes from the database row status after a promotion, not this seed label.
 export const ptShadowPack = copyRulePackToShadow(ptPack, 2, [timedCodeCapRule]);
 
+// v1 and v2 retain their exact deployed rosters. Eligibility enters a new
+// candidate so existing audit rows continue to identify the policy they ran.
+export const ptEligibilityShadowPack = copyRulePackToShadow(ptShadowPack, 3, [coverageInactiveRule]);
+
 export const RulePackManifestSchema = z.object({
   id: z.literal("outpatient-pt"),
   version: z.number().int().positive(),
@@ -38,7 +42,8 @@ export function rulePackManifest(pack: Pick<VersionedRulePack, "id" | "version" 
 /** Resolve a stored manifest only when it exactly matches a deployed version. */
 export function resolveRulePack(value: unknown): Pick<VersionedRulePack, "id" | "version" | "rules"> {
   const manifest = RulePackManifestSchema.parse(value);
-  const pack = [ptPack, ptShadowPack].find((entry) => entry.id === manifest.id && entry.version === manifest.version);
+  const pack = [ptPack, ptShadowPack, ptEligibilityShadowPack]
+    .find((entry) => entry.id === manifest.id && entry.version === manifest.version);
   if (!pack) throw new TypeError("Rule pack version is not deployed");
   const expected = rulePackManifest(pack).rules.map(({ id, version }) => `${id}@${version}`).sort();
   const actual = manifest.rules.map(({ id, version }) => `${id}@${version}`).sort();

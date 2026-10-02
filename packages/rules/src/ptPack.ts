@@ -6,6 +6,26 @@ import type { Rule, RuleResult } from "./types.js";
 const ptCodes = new Set(["97161", "97162", "97163", "97110", "97112", "97140", "97530", "97535"]);
 const evalCodes = new Set(["97161", "97162", "97163"]);
 const distinctModifiers = new Set(["59", "XE", "XP", "XS", "XU"]);
+const ELIGIBILITY_FRESH_MS = 7 * 24 * 60 * 60 * 1000;
+
+export const coverageInactiveRule: Rule = Object.freeze<Rule>({
+  id: "coverage-inactive", version: 1, description: "Review the most recent eligibility check before submission.",
+  evaluate(ctx): RuleResult {
+    const checkedAt = ctx.coverage?.checkedAt;
+    if (!checkedAt) return { outcome: "FLAG", code: "ELIGIBILITY_NOT_RUN", message: "No eligibility check is recorded for this coverage." };
+    const ageMs = Date.parse(ctx.evaluationTime) - Date.parse(checkedAt);
+    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs >= ELIGIBILITY_FRESH_MS) {
+      return { outcome: "FLAG", code: "ELIGIBILITY_STALE", message: "The latest eligibility check is at least seven days old or outside the current evaluation period.", detail: { checkedAt } };
+    }
+    if (ctx.coverage?.eligible === false) {
+      return { outcome: "BLOCK", code: "COVERAGE_INACTIVE", message: "The most recent eligibility check reports inactive coverage.", detail: { checkedAt } };
+    }
+    if (ctx.coverage?.eligible !== true) {
+      return { outcome: "FLAG", code: "ELIGIBILITY_NOT_RUN", message: "No complete eligibility result is recorded for this coverage." };
+    }
+    return { outcome: "PASS" };
+  },
+});
 
 export const gpModifierRule: Rule = Object.freeze<Rule>({
   id: "gp-modifier", version: 1, description: "Add GP to PT lines when the payer requires it.",

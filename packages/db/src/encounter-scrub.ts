@@ -41,7 +41,7 @@ export async function scrubEncounter(db: Database, organizationId: string, encou
       || (encounter.status === "CLAIMED" && !deniedRetry)) {
       throw new EncounterScrubError(409, "CLAIM_ALREADY_SUBMITTED", "A submitted claim cannot be scrubbed or replaced");
     }
-    const coverages = await tx.select().from(s.coverages).where(and(eq(s.coverages.patientId, encounter.patientId), eq(s.coverages.active, true)));
+    const coverages = await tx.select().from(s.coverages).where(and(eq(s.coverages.patientId, encounter.patientId), eq(s.coverages.active, true))).for("share");
     // The current encounter model has no coverage selector. Do not guess between
     // multiple active payers; a future coordination-of-benefits flow must select one.
     if (coverages.length !== 1) throw new EncounterScrubError(422, "COVERAGE_NOT_UNIQUE", "Exactly one active coverage is required for this fixture scrub");
@@ -105,7 +105,8 @@ export async function scrubEncounter(db: Database, organizationId: string, encou
       )).orderBy(s.claims.encounterId, desc(s.claims.version));
     const yearToDateBilledCents = MoneyCentsSchema.parse(billed.reduce((sum, row) => sum + row.cents, 0));
     const ctx: RuleContext = { encounter, minuteLines, allocatedUnits, draftClaim, claimChargeCents,
-      coverage, payer, authorizations, planOfCare, yearToDateBilledCents, mode: "active" };
+      coverage, payer, authorizations, planOfCare, yearToDateBilledCents,
+      evaluationTime: new Date().toISOString(), mode: "active" };
     const current: Claim = reuse ? latest! : { id: claimId, encounterId, version, status: "DRAFT", payerId: payer.id, totalChargeCents: claimChargeCents, snapshotJson: {} };
     if (!reuse) await tx.insert(s.claims).values(current);
     const { row: ruleSet, pack } = await currentRulePack(tx, "ACTIVE");
@@ -180,7 +181,8 @@ export async function shadowScrubEncounter(db: Database, organizationId: string,
         claimChargeCents: MoneyCentsSchema.parse(draftClaim.lines.reduce((sum, line) => sum + fixtureLineChargeCents(line.cptCode, line.units), 0)),
         coverage, payer, authorizations: AuthorizationSchema.array().parse(saved.authorizations),
         planOfCare: PlanOfCareSchema.nullable().parse(saved.planOfCare),
-        yearToDateBilledCents: MoneyCentsSchema.parse(saved.yearToDateBilledCents), mode: "shadow" };
+        yearToDateBilledCents: MoneyCentsSchema.parse(saved.yearToDateBilledCents),
+        evaluationTime: new Date().toISOString(), mode: "shadow" };
     } catch {
       throw new EncounterScrubError(409, "SHADOW_SOURCE_INVALID", "Saved scrub input is unavailable for shadow comparison");
     }

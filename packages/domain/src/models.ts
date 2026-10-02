@@ -98,6 +98,12 @@ export const CoverageSchema = z.object({
   id: IdSchema, patientId: IdSchema, payerId: IdSchema, memberId: MemberIdSchema,
   groupNumber: NonEmptyString.nullable(), subscriberRelationship: SubscriberRelationshipSchema,
   planName: NonEmptyString.nullable(), active: z.boolean(),
+  // A missing eligibility check is represented by null fields, not by an
+  // assumed active plan. These values are cached from the fixture adapter.
+  eligible: z.boolean().nullable().default(null),
+  checkedAt: UtcTimestampSchema.nullable().default(null),
+  deductibleRemainingCents: MoneyCentsSchema.nullable().default(null),
+  planActive: z.boolean().nullable().default(null),
 }).strict();
 export type Coverage = z.infer<typeof CoverageSchema>;
 

@@ -103,11 +103,16 @@ export const coverages = pgTable("coverages", {
   subscriberRelationship: subscriberRelationship("subscriber_relationship").notNull(),
   planName: text("plan_name"),
   active: boolean("active").notNull(),
+  eligible: boolean("eligible"),
+  checkedAt: utcTimestamp("checked_at"),
+  deductibleRemainingCents: integer("deductible_remaining_cents"),
+  planActive: boolean("plan_active"),
 }, (t) => [
   unique("coverages_patient_payer_unique").on(t.patientId, t.payerId),
   index("coverages_patient_idx").on(t.patientId),
   index("coverages_payer_idx").on(t.payerId),
   check("coverages_synthetic_member_id", sql`${t.memberId} ~ '^SYN[A-Za-z0-9-]+$'`),
+  check("coverages_deductible_nonnegative", sql`${t.deductibleRemainingCents} IS NULL OR ${t.deductibleRemainingCents} >= 0`),
 ]);
 
 export const encounters = pgTable("encounters", {

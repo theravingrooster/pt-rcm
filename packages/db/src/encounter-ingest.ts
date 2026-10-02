@@ -78,7 +78,15 @@ export async function upsertEncounter(db: Database, organizationId: string, inpu
     };
     await tx.insert(s.coverages).values({
       patientId: patient.id, payerId, ...coverageValues, groupNumber: null, planName: null,
-    }).onConflictDoUpdate({ target: [s.coverages.patientId, s.coverages.payerId], set: coverageValues });
+    }).onConflictDoUpdate({ target: [s.coverages.patientId, s.coverages.payerId], set: {
+      ...coverageValues,
+      // The check belongs to the member ID. Preserve it on a repeat ingest,
+      // but discard it when an edited encounter supplies a different member.
+      eligible: sql`case when ${s.coverages.memberId} = excluded.member_id then ${s.coverages.eligible} else null end`,
+      checkedAt: sql`case when ${s.coverages.memberId} = excluded.member_id then ${s.coverages.checkedAt} else null end`,
+      deductibleRemainingCents: sql`case when ${s.coverages.memberId} = excluded.member_id then ${s.coverages.deductibleRemainingCents} else null end`,
+      planActive: sql`case when ${s.coverages.memberId} = excluded.member_id then ${s.coverages.planActive} else null end`,
+    } });
 
     if (data.planOfCare) {
       const [plan] = await tx.select({ id: s.plansOfCare.id }).from(s.plansOfCare).where(and(

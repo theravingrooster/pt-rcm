@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq, inArray } from "drizzle-orm";
 import { ClaimNotSubmittable, ClaimStatusSchema, IllegalClaimTransition, type EncounterIngestInput } from "@pt-rcm/domain";
-import { completeTask, createDatabase, getClaimDocument, listTasks, scrubEncounter, submitScrubbedClaim, transitionStoredClaim, upsertEncounter } from "./index.js";
+import { checkCoverageEligibility, completeTask, createDatabase, getClaimDocument, listTasks, scrubEncounter, submitScrubbedClaim, transitionStoredClaim, upsertEncounter } from "./index.js";
 import { FixtureClearinghouse } from "@pt-rcm/clearinghouse";
 import * as ruleFireRepository from "./rule-fire-repository.js";
 import * as s from "./schema.js";
@@ -103,6 +103,23 @@ describe.skipIf(!url)("transactional PT scrub", () => {
     expect(result).toMatchObject({ claimId: first.claimId, status: "BLOCKED", totalUnits: 4, totalChargeCents: 18000, submissionAllowed: false });
     expect(result.blocks).toEqual(expect.arrayContaining([expect.objectContaining({ code: "OVERBILLED_UNITS" })]));
     expect((await stored(result.claimId)).claim!.status).toBe("BLOCKED");
+  });
+
+  it("requires another scrub after an eligibility check without creating a new claim version", async () => {
+    const { encounterId, patientId } = await create();
+    const first = await scrub(encounterId);
+    const [coverage] = await connection.db.select().from(s.coverages).where(eq(s.coverages.patientId, patientId));
+    const fixture = new FixtureClearinghouse();
+    const check = await checkCoverageEligibility(connection.db, organizationId, coverage!.id,
+      { adapter: "fixture", clearinghouse: fixture });
+    expect(check).toMatchObject({ eligible: true, planActive: true });
+    await expect(submitScrubbedClaim(connection.db, organizationId, first.claimId,
+      { adapter: "fixture", clearinghouse: fixture })).rejects.toMatchObject({ code: "CLAIM_NEEDS_SCRUB" });
+    expect(fixture.calls).toEqual([{ method: "checkEligibility", request: { memberId: coverage!.memberId } }]);
+    const second = await scrub(encounterId);
+    expect(second).toMatchObject({ claimId: first.claimId, version: 1, status: "SCRUBBED" });
+    expect(await submitScrubbedClaim(connection.db, organizationId, first.claimId,
+      { adapter: "fixture", clearinghouse: fixture })).toMatchObject({ status: "SUBMITTED" });
   });
 
   it("missing POC blocks the shoulder claim", async () => {

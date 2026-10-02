@@ -93,7 +93,9 @@ describe.skipIf(!url)("transactional encounter ingestion", () => {
     const body = input();
     const first = await upsertEncounter(connection.db, organizationId, body);
     await connection.db.update(s.encounters).set({ status }).where(eq(s.encounters.id, first.encounterId));
-    await connection.db.update(s.coverages).set({ groupNumber: "SYN-GROUP", planName: "SYN Existing Plan" }).where(eq(s.coverages.patientId, first.patientId));
+    await connection.db.update(s.coverages).set({ groupNumber: "SYN-GROUP", planName: "SYN Existing Plan",
+      eligible: true, checkedAt: "2026-10-02T12:00:00.000Z", deductibleRemainingCents: 1500, planActive: true,
+    }).where(eq(s.coverages.patientId, first.patientId));
     await connection.db.update(s.plansOfCare).set({ expiresOn: "2026-12-31" }).where(eq(s.plansOfCare.patientId, first.patientId));
     body.patient.name = "SYN Updated Demo";
     body.patient.coverage.memberId = "SYN-MEMBER-UPDATED";
@@ -110,9 +112,21 @@ describe.skipIf(!url)("transactional encounter ingestion", () => {
     expect(await connection.db.select().from(s.patients).where(and(eq(s.patients.organizationId, organizationId), eq(s.patients.externalId, body.patient.externalId))))
       .toMatchObject([{ id: first.patientId, firstName: "SYN", lastName: "Updated Demo" }]);
     expect(await connection.db.select().from(s.coverages).where(eq(s.coverages.patientId, first.patientId)))
-      .toMatchObject([{ memberId: "SYN-MEMBER-UPDATED", groupNumber: "SYN-GROUP", planName: "SYN Existing Plan" }]);
+      .toMatchObject([{ memberId: "SYN-MEMBER-UPDATED", groupNumber: "SYN-GROUP", planName: "SYN Existing Plan",
+        eligible: null, checkedAt: null, deductibleRemainingCents: null, planActive: null }]);
     expect(await connection.db.select().from(s.plansOfCare).where(eq(s.plansOfCare.patientId, first.patientId)))
       .toMatchObject([{ expiresOn: "2026-12-31" }]);
+  });
+
+  it("preserves a cached check when a repeat ingest keeps the same member ID", async () => {
+    const body = input();
+    const first = await upsertEncounter(connection.db, organizationId, body);
+    await connection.db.update(s.coverages).set({ eligible: true, checkedAt: "2026-10-02T12:00:00.000Z",
+      deductibleRemainingCents: 1500, planActive: true }).where(eq(s.coverages.patientId, first.patientId));
+    await upsertEncounter(connection.db, organizationId, body);
+    expect(await connection.db.select().from(s.coverages).where(eq(s.coverages.patientId, first.patientId)))
+      .toMatchObject([{ eligible: true, checkedAt: "2026-10-02T12:00:00.000Z",
+        deductibleRemainingCents: 1500, planActive: true }]);
   });
 
   it.each<ClaimStatus>(["SUBMITTED", "ACCEPTED", "REJECTED", "PAID", "DENIED", "PATIENT_BALANCE"])("rejects updates after claim status %s, including a later draft version", async (status) => {

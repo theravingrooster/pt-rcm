@@ -11,6 +11,7 @@ export { ClaimLifecycleError, transitionStoredClaim } from "./claim-lifecycle.js
 export { TaskNotFound, listTasks, completeTask } from "./tasks.js";
 export * from "./remit-post.js";
 export * from "./remit-poll.js";
+export * from "./coverage-eligibility.js";
 export * from "./operator-read.js";
 export * from "./metrics-read.js";
 export * from "./rule-fire-repository.js";

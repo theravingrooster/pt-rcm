@@ -8,6 +8,8 @@ import {
 export type DeepReadonly<T> = T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } : T;
 
 export type RuleContext = DeepReadonly<{
+  /** Caller-supplied UTC evaluation time; never read the clock inside a rule. */
+  evaluationTime: string;
   encounter: Encounter;
   minuteLines: EncounterMinuteLine[];
   allocatedUnits: UnitAllocation;
