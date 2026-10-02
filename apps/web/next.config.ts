@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  transpilePackages: ["@pt-rcm/domain", "@pt-rcm/db", "@pt-rcm/rules"],
+  transpilePackages: ["@pt-rcm/domain", "@pt-rcm/db", "@pt-rcm/rules", "@pt-rcm/clearinghouse"],
   webpack(config) {
     // Workspace sources use NodeNext's .js specifiers for TypeScript modules.
     config.resolve.extensionAlias = {

@@ -1,10 +1,11 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { and, desc, eq, gte, inArray, lte, ne } from "drizzle-orm";
 import { allocateUnits, fixtureLineChargeCents, IdSchema, JsonObjectSchema, loadMedicareMinuteLadder, MoneyCentsSchema } from "@pt-rcm/domain";
 import { applyDowngrades, defaultRulePack, ptPack, runRulesWithRepository, type ClaimDraft, type RuleContext } from "@pt-rcm/rules";
 import type { Database } from "./index.js";
 import { createRuleFireRepository } from "./rule-fire-repository.js";
 import * as s from "./schema.js";
+import { encounterSourceFingerprint } from "./encounter-source.js";
 
 export class EncounterScrubError extends Error {
   constructor(readonly status: 404 | 409 | 422, readonly code: string, message: string) {
@@ -43,9 +44,7 @@ export async function scrubEncounter(db: Database, organizationId: string, encou
       .orderBy(s.encounterMinuteLines.cptCode, s.encounterMinuteLines.id);
     const diagnoses = await tx.select().from(s.diagnoses).where(eq(s.diagnoses.encounterId, encounterId)).orderBy(s.diagnoses.pointer);
     const allocatedUnits = allocateUnits(minuteLines, loadMedicareMinuteLadder());
-    const sourceFingerprint = createHash("sha256").update(JSON.stringify({
-      encounter: { ...encounter, status: undefined }, coverage, minuteLines, diagnoses,
-    })).digest("hex");
+    const sourceFingerprint = encounterSourceFingerprint(encounter, coverage, minuteLines, diagnoses);
     const latest = previous[0];
     if (latest && typeof latest.snapshotJson.sourceFingerprint !== "string") {
       throw new EncounterScrubError(409, "DRAFT_SOURCE_UNKNOWN", "Existing draft has no source mapping; review it before scrubbing");

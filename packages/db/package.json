@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@pt-rcm/domain": "workspace:*",
+    "@pt-rcm/clearinghouse": "workspace:*",
     "@pt-rcm/rules": "workspace:*",
     "drizzle-orm": "^0.36.4",
     "postgres": "^3.4.5"

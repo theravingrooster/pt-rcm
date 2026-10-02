@@ -6,6 +6,7 @@ export * from "./schema.js";
 export * from "./encounter-ingest.js";
 export * from "./encounter-scrub.js";
 export * from "./claim-document.js";
+export * from "./claim-submit.js";
 export * from "./rule-fire-repository.js";
 
 // Importing the package does not open a connection or contact a clearinghouse.

@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq, inArray } from "drizzle-orm";
-import { ClaimNotSubmittable, type EncounterIngestInput } from "@pt-rcm/domain";
-import { createDatabase, getClaimDocument, scrubEncounter, upsertEncounter } from "./index.js";
+import { ClaimNotSubmittable, ClaimStatusSchema, type EncounterIngestInput } from "@pt-rcm/domain";
+import { createDatabase, getClaimDocument, scrubEncounter, submitScrubbedClaim, upsertEncounter } from "./index.js";
+import { FixtureClearinghouse } from "@pt-rcm/clearinghouse";
 import * as ruleFireRepository from "./rule-fire-repository.js";
 import * as s from "./schema.js";
 import { seedSyntheticData } from "./seed-database.js";
@@ -38,6 +39,7 @@ describe.skipIf(!url)("transactional PT scrub", () => {
           const claims = await tx.select({ id: s.claims.id }).from(s.claims).where(inArray(s.claims.encounterId, encounterIds));
           if (claims.length) {
             const claimIds = claims.map((row) => row.id);
+            await tx.delete(s.auditEvents).where(inArray(s.auditEvents.entityId, claimIds));
             await tx.delete(s.ruleFires).where(inArray(s.ruleFires.claimId, claimIds));
             await tx.delete(s.claimLines).where(inArray(s.claimLines.claimId, claimIds));
             await tx.delete(s.claims).where(inArray(s.claims.id, claimIds));
@@ -251,6 +253,97 @@ describe.skipIf(!url)("transactional PT scrub", () => {
       const saved = await stored(result.claimId);
       await connection.db.update(s.claimLines).set(changes).where(eq(s.claimLines.id, saved.lines[0]!.id));
       await expect(getClaimDocument(connection.db, organizationId, result.claimId)).rejects.toMatchObject({ status: 422, code: "INVALID_CLAIM_DOCUMENT" });
+    });
+  });
+
+  describe("fixture claim submission", () => {
+    it("records the exact document, stores the ICN and audit, and only marks SUBMITTED", async () => {
+      const { encounterId } = await create(); const scrubbed = await scrub(encounterId);
+      const document = await getClaimDocument(connection.db, organizationId, scrubbed.claimId);
+      const clearinghouse = new FixtureClearinghouse();
+      const result = await submitScrubbedClaim(connection.db, organizationId, scrubbed.claimId, { adapter: "fixture", clearinghouse });
+      expect(result).toMatchObject({ claimId: scrubbed.claimId, status: "SUBMITTED", icn: `SYN-ICN-${scrubbed.claimId}` });
+      expect(clearinghouse.calls).toEqual([{ method: "submitClaim", document }]);
+      const saved = await stored(scrubbed.claimId);
+      expect(saved.claim).toMatchObject({ status: "SUBMITTED", totalChargeCents: 13500, snapshotJson: {
+        submission: { adapter: "fixture", acknowledgment: result.acknowledgment, document, submittedAt: expect.stringMatching(/Z$/) },
+      } });
+      expect(saved.fires).toHaveLength(8);
+      const audits = await connection.db.select().from(s.auditEvents).where(eq(s.auditEvents.entityId, scrubbed.claimId));
+      expect(audits).toMatchObject([{ actor: "SYN-FIXTURE-SUBMIT", action: "CLAIM_SUBMITTED", entity: "Claim",
+        detailJson: { adapter: "fixture", icn: result.icn, acknowledgmentStatus: "accepted-for-processing" } }]);
+      expect((await connection.db.select().from(s.encounters).where(eq(s.encounters.id, encounterId)))[0]!.status).toBe("CLAIMED");
+      await expect(submitScrubbedClaim(connection.db, organizationId, scrubbed.claimId, { adapter: "fixture", clearinghouse })).rejects.toBeInstanceOf(ClaimNotSubmittable);
+      expect(clearinghouse.calls).toHaveLength(1);
+    });
+
+    it.each(ClaimStatusSchema.options.filter((status) => status !== "SCRUBBED"))("refuses %s before calling the adapter", async (status) => {
+      const { encounterId } = await create(); const scrubbed = await scrub(encounterId);
+      await connection.db.update(s.claims).set({ status }).where(eq(s.claims.id, scrubbed.claimId));
+      const clearinghouse = new FixtureClearinghouse();
+      const before = await stored(scrubbed.claimId);
+      await expect(submitScrubbedClaim(connection.db, organizationId, scrubbed.claimId, { adapter: "fixture", clearinghouse })).rejects.toBeInstanceOf(ClaimNotSubmittable);
+      expect(clearinghouse.calls).toEqual([]);
+      expect(await stored(scrubbed.claimId)).toEqual(before);
+    });
+
+    it.each([undefined, "", "stedi", "Fixture"])("refuses adapter %s without any submit", async (adapter) => {
+      const { encounterId } = await create(); const scrubbed = await scrub(encounterId);
+      const clearinghouse = new FixtureClearinghouse();
+      await expect(submitScrubbedClaim(connection.db, organizationId, scrubbed.claimId, { adapter, clearinghouse })).rejects.toMatchObject({ status: 503, code: "CLEARINGHOUSE_ADAPTER_DISABLED" });
+      expect(clearinghouse.calls).toEqual([]);
+      expect((await stored(scrubbed.claimId)).claim!.status).toBe("SCRUBBED");
+    });
+
+    it("serializes duplicate requests to exactly one fixture call and one audit", async () => {
+      const { encounterId } = await create(); const scrubbed = await scrub(encounterId);
+      const clearinghouse = new FixtureClearinghouse();
+      const results = await Promise.allSettled([1, 2].map(() => submitScrubbedClaim(connection.db, organizationId, scrubbed.claimId, { adapter: "fixture", clearinghouse })));
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+      expect(clearinghouse.calls).toHaveLength(1);
+      expect(await connection.db.select().from(s.auditEvents).where(eq(s.auditEvents.entityId, scrubbed.claimId))).toHaveLength(1);
+    });
+
+    it("requires a new scrub after encounter edits and refuses superseded versions", async () => {
+      const body = input(); const { encounterId } = await create(body); const first = await scrub(encounterId);
+      body.minuteLines = [{ cptCode: "97110", minutes: 8 }]; await create(body);
+      const clearinghouse = new FixtureClearinghouse();
+      const options = { adapter: "fixture", clearinghouse };
+      await expect(submitScrubbedClaim(connection.db, organizationId, first.claimId, options)).rejects.toMatchObject({ code: "CLAIM_NEEDS_SCRUB" });
+      const latest = await scrub(encounterId);
+      await expect(submitScrubbedClaim(connection.db, organizationId, first.claimId, options)).rejects.toMatchObject({ code: "CLAIM_SUPERSEDED" });
+      expect(clearinghouse.calls).toEqual([]);
+      expect((await submitScrubbedClaim(connection.db, organizationId, latest.claimId, options)).status).toBe("SUBMITTED");
+    });
+
+    it("rejects a wrong organization and missing claim before any adapter call", async () => {
+      const { encounterId } = await create(); const scrubbed = await scrub(encounterId);
+      const clearinghouse = new FixtureClearinghouse();
+      await expect(submitScrubbedClaim(connection.db, seedOrganization.id, scrubbed.claimId, { adapter: "fixture", clearinghouse })).rejects.toMatchObject({ status: 404 });
+      await expect(submitScrubbedClaim(connection.db, organizationId, randomUUID(), { adapter: "fixture", clearinghouse })).rejects.toMatchObject({ status: 404 });
+      expect(clearinghouse.calls).toEqual([]);
+    });
+
+    it("refuses post-scrub line edits before the adapter sees a document", async () => {
+      const { encounterId } = await create(); const scrubbed = await scrub(encounterId);
+      const saved = await stored(scrubbed.claimId);
+      await connection.db.update(s.claimLines).set({ units: 3 }).where(eq(s.claimLines.id, saved.lines[0]!.id));
+      const clearinghouse = new FixtureClearinghouse();
+      await expect(submitScrubbedClaim(connection.db, organizationId, scrubbed.claimId, { adapter: "fixture", clearinghouse })).rejects.toMatchObject({ status: 422 });
+      expect(clearinghouse.calls).toEqual([]);
+    });
+
+    it("does not change status or write an audit when the adapter fails or acknowledges incorrectly", async () => {
+      const { encounterId } = await create(); const scrubbed = await scrub(encounterId);
+      const clearinghouse = new FixtureClearinghouse();
+      const submit = vi.spyOn(clearinghouse, "submitClaim").mockRejectedValueOnce(new Error("SYN local failure"));
+      await expect(submitScrubbedClaim(connection.db, organizationId, scrubbed.claimId, { adapter: "fixture", clearinghouse })).rejects.toThrow("SYN local failure");
+      submit.mockResolvedValueOnce({ icn: "INVALID", status: "accepted-for-processing" });
+      await expect(submitScrubbedClaim(connection.db, organizationId, scrubbed.claimId, { adapter: "fixture", clearinghouse })).rejects.toMatchObject({ code: "INVALID_SUBMIT_ACK" });
+      submit.mockRestore();
+      expect((await stored(scrubbed.claimId)).claim).toMatchObject({ status: "SCRUBBED" });
+      expect(await connection.db.select().from(s.auditEvents).where(eq(s.auditEvents.entityId, scrubbed.claimId))).toEqual([]);
     });
   });
 

@@ -12,6 +12,7 @@ jobs:
     env:
       DATABASE_URL: postgres://pt:pt@localhost:5432/pt_rcm
       TEST_DATABASE_URL: postgres://pt:pt@localhost:5432/pt_rcm
+      CLEARINGHOUSE_ADAPTER: fixture
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,7 +34,7 @@ jobs:
       - run: pnpm test
       - name: Build the Next.js app
         run: pnpm --filter @pt-rcm/web build
-      - name: Ingest, scrub, and read the synthetic document through HTTP
+      - name: Ingest, scrub, read, and fixture-submit through HTTP
         run: |
           pnpm --filter @pt-rcm/web exec next start > /tmp/pt-rcm-web.log 2>&1 &
           web_pid=$!
@@ -74,6 +75,14 @@ jobs:
           assert.equal(document.billingProvider.tin, 'SYN-TAX-1');
           assert.equal(document.benefitsAssigned, true);
           assert.equal(document.acceptAssignment, true);
+          const submitUrl = `http://localhost:3000/api/claims/${scrubbed.claimId}/submit`;
+          const submitted = await fetch(submitUrl, { method: 'POST' });
+          assert.equal(submitted.status, 200);
+          const receipt = await submitted.json();
+          assert.equal(receipt.status, 'SUBMITTED');
+          assert.equal(receipt.icn, `SYN-ICN-${scrubbed.claimId}`);
+          assert.equal(receipt.acknowledgment.status, 'accepted-for-processing');
+          assert.equal((await fetch(submitUrl, { method: 'POST' })).status, 409);
           JS
       - name: Check migration drift
         run: |
