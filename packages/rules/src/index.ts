@@ -1,1 +1,1 @@
-export const rulesPackage = "@pt-rcm/rules";
+export const rulesReady = false;

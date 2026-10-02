@@ -8,9 +8,10 @@
   },
   "packageManager": "pnpm@9.15.0",
   "scripts": {
-    "test": "pnpm -r test",
+    "setup:cloud": "bash scripts/cloud-setup.sh",
+    "test": "pnpm -r --if-present test",
     "lint": "pnpm -r --if-present lint",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm -r --if-present typecheck",
     "dev": "pnpm --filter @pt-rcm/web dev",
     "db:generate": "pnpm --filter @pt-rcm/db generate",
     "db:migrate": "pnpm --filter @pt-rcm/db migrate"

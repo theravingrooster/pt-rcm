@@ -4,7 +4,17 @@ Outpatient physical therapy billing rules prototype. Synthetic data only. Fixtur
 
 Medicare plus one synthetic commercial payer. Professional claims only. The 8-minute rule, GP, KX, plan of care, and auth checks are the product. This repo does not submit to a payer.
 
-## Setup
+## Codex Cloud setup
+
+Cloud has no Docker daemon. Do not run `docker compose` or `pnpm db:migrate` during environment setup.
+
+```bash
+bash scripts/cloud-setup.sh
+```
+
+That enables pnpm 9.15.0, installs dependencies, and runs the domain test. Node 22 is required.
+
+## Local setup
 
 ```bash
 pnpm install
@@ -13,8 +23,6 @@ pnpm db:migrate
 pnpm test
 pnpm dev
 ```
-
-Node 22. Package manager is pnpm. Do not use the old ClaimGuard npm scripts.
 
 ## What this does not do
 

@@ -18,4 +18,8 @@ Tests are required for every domain function. Prefer table tests.
 
 Do not add a README tutorial longer than the run steps.
 
-The ClaimGuard seed in this repo was replaced. Ignore any ClaimGuard names, npm scripts, or src/index.ts layout. Package root is pt-rcm. Workspaces are apps/* and packages/*.
+Package root is pt-rcm. Workspaces are apps/* and packages/*.
+
+## Codex Cloud
+
+Environment setup must run `bash scripts/cloud-setup.sh` only. Do not run `docker compose` or `pnpm db:migrate` in cloud setup. There is no Docker daemon, no migrations folder, and the database schema is still a stub.
