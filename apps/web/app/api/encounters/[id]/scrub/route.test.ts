@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EncounterScrubError, scrubEncounter } from "@pt-rcm/db";
+import { IllegalClaimTransition } from "@pt-rcm/domain";
 import { POST } from "./route.js";
 
 vi.mock("@pt-rcm/db", async (importOriginal) => ({
@@ -41,5 +42,11 @@ describe("POST /api/encounters/:id/scrub", () => {
     const response = await POST(request, { params });
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ error: "SCRUB_FAILED" });
+  });
+  it("maps an illegal lifecycle transition to a conflict", async () => {
+    vi.mocked(scrubEncounter).mockRejectedValue(new IllegalClaimTransition("PAID", "SCRUBBED"));
+    const response = await POST(request, { params });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "ILLEGAL_CLAIM_TRANSITION" });
   });
 });

@@ -34,7 +34,7 @@ jobs:
       - run: pnpm test
       - name: Build the Next.js app
         run: pnpm --filter @pt-rcm/web build
-      - name: Ingest, scrub, read, and fixture-submit through HTTP
+      - name: Verify claim and task workflows through HTTP
         run: |
           pnpm --filter @pt-rcm/web exec next start > /tmp/pt-rcm-web.log 2>&1 &
           web_pid=$!
@@ -83,6 +83,35 @@ jobs:
           assert.equal(receipt.icn, `SYN-ICN-${scrubbed.claimId}`);
           assert.equal(receipt.acknowledgment.status, 'accepted-for-processing');
           assert.equal((await fetch(submitUrl, { method: 'POST' })).status, 409);
+          delete body.planOfCare;
+          body.externalId = 'SYN-HTTP-TASK';
+          body.patient.externalId = 'SYN-HTTP-TASK-PATIENT';
+          const blockedIngest = await fetch('http://localhost:3000/api/encounters', {
+            method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+          });
+          assert.equal(blockedIngest.status, 201);
+          const blockedEncounter = await blockedIngest.json();
+          const blockedResponse = await fetch(`http://localhost:3000/api/encounters/${blockedEncounter.encounterId}/scrub`, { method: 'POST' });
+          assert.equal(blockedResponse.status, 200);
+          const blocked = await blockedResponse.json();
+          assert.equal(blocked.status, 'BLOCKED');
+          const taskResponse = await fetch('http://localhost:3000/api/tasks?status=OPEN');
+          assert.equal(taskResponse.status, 200);
+          assert.equal(taskResponse.headers.get('cache-control'), 'no-store');
+          const tasks = (await taskResponse.json()).tasks.filter(task => task.claimId === blocked.claimId);
+          assert.equal(tasks.length, 1);
+          assert.equal(tasks[0].kind, 'RULE_BLOCK');
+          assert.equal(tasks[0].owner, 'OPERATOR');
+          const doneUrl = `http://localhost:3000/api/tasks/${tasks[0].id}/done`;
+          for (let attempt = 0; attempt < 2; attempt++) {
+            const done = await fetch(doneUrl, { method: 'POST' });
+            assert.equal(done.status, 200);
+            assert.equal((await done.json()).task.status, 'DONE');
+          }
+          const open = await (await fetch('http://localhost:3000/api/tasks?status=OPEN')).json();
+          assert.ok(!open.tasks.some(task => task.id === tasks[0].id));
+          const done = await (await fetch('http://localhost:3000/api/tasks?status=DONE')).json();
+          assert.ok(done.tasks.some(task => task.id === tasks[0].id));
           JS
       - name: Check migration drift
         run: |

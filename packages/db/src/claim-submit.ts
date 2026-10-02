@@ -1,5 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
-import { ClaimNotSubmittable, IdSchema, JsonObjectSchema } from "@pt-rcm/domain";
+import { ClaimNotSubmittable, IdSchema, JsonObjectSchema, transitionClaim } from "@pt-rcm/domain";
 import type { ClearinghousePort } from "@pt-rcm/clearinghouse";
 import type { Database } from "./index.js";
 import { ClaimDocumentReadError, readClaimDocument } from "./claim-document.js";
@@ -37,6 +37,8 @@ export async function submitScrubbedClaim(db: Database, organizationId: string, 
     const claim = siblings.find((row) => row.id === claimId);
     if (!claim) throw new ClaimDocumentReadError(404, "CLAIM_NOT_FOUND", "Claim not found in this organization");
     if (claim.status !== "SCRUBBED") throw new ClaimNotSubmittable(claim.status);
+    // Validate the lifecycle before any adapter side effect. Persist only on ack.
+    const submitted = transitionClaim(claim, "SUBMITTED");
     if (siblings[0]!.id !== claimId) throw new ClaimSubmissionError(409, "CLAIM_SUPERSEDED", "Only the latest scrubbed version can be submitted");
     const preSubmission = new Set(["DRAFT", "SCRUBBED", "BLOCKED", "SHADOWED"]);
     if (encounter.status === "CLAIMED" || siblings.some((row) => !preSubmission.has(row.status))) {
@@ -56,7 +58,7 @@ export async function submitScrubbedClaim(db: Database, organizationId: string, 
       throw new ClaimSubmissionError(502, "INVALID_SUBMIT_ACK", "Fixture did not return an accepted-for-processing acknowledgment");
     }
     const submittedAt = new Date().toISOString();
-    await tx.update(s.claims).set({ status: "SUBMITTED", snapshotJson: JsonObjectSchema.parse({
+    await tx.update(s.claims).set({ status: submitted.status, version: submitted.version, snapshotJson: JsonObjectSchema.parse({
       ...claim.snapshotJson, submission: { adapter: "fixture", acknowledgment: ack, document, submittedAt },
     }) }).where(eq(s.claims.id, claimId));
     await tx.update(s.encounters).set({ status: "CLAIMED" }).where(eq(s.encounters.id, encounter.id));

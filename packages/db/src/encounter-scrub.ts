@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, gte, inArray, lte, ne } from "drizzle-orm";
-import { allocateUnits, fixtureLineChargeCents, IdSchema, JsonObjectSchema, loadMedicareMinuteLadder, MoneyCentsSchema } from "@pt-rcm/domain";
+import { allocateUnits, fixtureLineChargeCents, IdSchema, JsonObjectSchema, loadMedicareMinuteLadder, MoneyCentsSchema, type Claim } from "@pt-rcm/domain";
 import { applyDowngrades, defaultRulePack, ptPack, runRulesWithRepository, type ClaimDraft, type RuleContext } from "@pt-rcm/rules";
 import type { Database } from "./index.js";
 import { createRuleFireRepository } from "./rule-fire-repository.js";
 import * as s from "./schema.js";
 import { encounterSourceFingerprint } from "./encounter-source.js";
+import { persistClaimTransition } from "./claim-lifecycle.js";
+import { openClaimTask } from "./tasks.js";
 
 export class EncounterScrubError extends Error {
   constructor(readonly status: 404 | 409 | 422, readonly code: string, message: string) {
@@ -29,8 +31,11 @@ export async function scrubEncounter(db: Database, organizationId: string, encou
     )).for("update");
     if (!encounter) throw new EncounterScrubError(404, "ENCOUNTER_NOT_FOUND", "Encounter not found in this organization");
     const previous = await tx.select().from(s.claims).where(eq(s.claims.encounterId, encounterId)).orderBy(desc(s.claims.version)).for("update");
-    const preSubmission = new Set(["DRAFT", "SCRUBBED", "BLOCKED", "SHADOWED"]);
-    if (previous.some((claim) => !preSubmission.has(claim.status)) || encounter.status === "CLAIMED") {
+    const latest = previous[0];
+    const deniedRetry = latest?.status === "DENIED";
+    const preSubmission = new Set(["DRAFT", "SCRUBBED", "BLOCKED"]);
+    if (previous.some((claim) => !preSubmission.has(claim.status) && !(claim.id === latest?.id && deniedRetry))
+      || (encounter.status === "CLAIMED" && !deniedRetry)) {
       throw new EncounterScrubError(409, "CLAIM_ALREADY_SUBMITTED", "A submitted claim cannot be scrubbed or replaced");
     }
     const coverages = await tx.select().from(s.coverages).where(and(eq(s.coverages.patientId, encounter.patientId), eq(s.coverages.active, true)));
@@ -45,11 +50,13 @@ export async function scrubEncounter(db: Database, organizationId: string, encou
     const diagnoses = await tx.select().from(s.diagnoses).where(eq(s.diagnoses.encounterId, encounterId)).orderBy(s.diagnoses.pointer);
     const allocatedUnits = allocateUnits(minuteLines, loadMedicareMinuteLadder());
     const sourceFingerprint = encounterSourceFingerprint(encounter, coverage, minuteLines, diagnoses);
-    const latest = previous[0];
     if (latest && typeof latest.snapshotJson.sourceFingerprint !== "string") {
       throw new EncounterScrubError(409, "DRAFT_SOURCE_UNKNOWN", "Existing draft has no source mapping; review it before scrubbing");
     }
     const reuse = latest?.snapshotJson.sourceFingerprint === sourceFingerprint;
+    // A denial revision keeps the claim identity. Changed clinical source data
+    // needs an explicit correction workflow; never replace DENIED with a new DRAFT.
+    if (deniedRetry && !reuse) throw new EncounterScrubError(409, "CLAIM_SOURCE_CHANGED", "Denied claim source changed; review the correction before re-scrubbing");
     const claimId = reuse ? latest!.id : randomUUID();
     const version = reuse ? latest!.version : (latest?.version ?? 0) + 1;
     let draftClaim: ClaimDraft = { encounterId, lines: allocatedUnits.lines.map(({ cptCode, minutes, units }) => ({
@@ -96,10 +103,16 @@ export async function scrubEncounter(db: Database, organizationId: string, encou
     const yearToDateBilledCents = MoneyCentsSchema.parse(billed.reduce((sum, row) => sum + row.cents, 0));
     const ctx: RuleContext = { encounter, minuteLines, allocatedUnits, draftClaim, claimChargeCents,
       coverage, payer, authorizations, planOfCare, yearToDateBilledCents, mode: "active" };
-    if (!reuse) await tx.insert(s.claims).values({ id: claimId, encounterId, version, status: "DRAFT", payerId: payer.id, totalChargeCents: claimChargeCents, snapshotJson: {} });
+    const current: Claim = reuse ? latest! : { id: claimId, encounterId, version, status: "DRAFT", payerId: payer.id, totalChargeCents: claimChargeCents, snapshotJson: {} };
+    if (!reuse) await tx.insert(s.claims).values(current);
     const run = await runRulesWithRepository(defaultRulePack, ctx, { claimId, repository: createRuleFireRepository(tx) });
     const applied = applyDowngrades(draftClaim, run.downgrades);
-    const status = run.submissionAllowed ? "SCRUBBED" as const : "BLOCKED" as const;
+    // A failed denial retry remains DENIED: there is no DENIED -> BLOCKED edge.
+    // Repeated scrubs with the same result are no-ops, not self-transitions.
+    const target = run.submissionAllowed ? "SCRUBBED" : deniedRetry ? "DENIED" : "BLOCKED";
+    const next = current.status === target ? current : await persistClaimTransition(tx, current, target);
+    if (!run.submissionAllowed) await openClaimTask(tx, claimId, "RULE_BLOCK", run.blocks.map((block) => `${block.code}: ${block.message}`).join("; "));
+    if (deniedRetry && run.submissionAllowed) await tx.update(s.encounters).set({ status: "DRAFT" }).where(eq(s.encounters.id, encounterId));
     const totalChargeCents = price(applied);
     for (const [index, line] of applied.lines.entries()) {
       // The canonical ClaimLine requires positive units. Keep all zero-unit
@@ -109,12 +122,19 @@ export async function scrubEncounter(db: Database, organizationId: string, encou
       if (reuse) await tx.update(s.claimLines).set(values).where(and(eq(s.claimLines.id, claimLineIds[index]!), eq(s.claimLines.claimId, claimId)));
       else await tx.insert(s.claimLines).values({ id: claimLineIds[index]!, claimId, ...values });
     }
-    await tx.update(s.claims).set({ status, totalChargeCents, snapshotJson: JsonObjectSchema.parse({
+    // Retain prior fixture receipts when a rejected/denied claim is corrected.
+    // On a failed denial retry the current receipt remains current.
+    const submission = latest?.snapshotJson.submission;
+    const history = latest?.snapshotJson.submissionHistory;
+    const submissionHistory = [...(Array.isArray(history) ? history : []),
+      ...(submission && next.status !== "DENIED" ? [{ version: latest!.version, submission }] : [])];
+    await tx.update(s.claims).set({ totalChargeCents, snapshotJson: JsonObjectSchema.parse({
       sourceFingerprint, claimLineIds, rulePack: { id: ptPack.id, version: ptPack.version, mode: "active" },
       encounter, minuteLines, diagnoses, coverage, payer, authorizations, planOfCare,
       yearToDateBilledCents, allocatedUnits, evaluatedDraft: draftClaim, draftClaim: applied,
+      submissionHistory, ...(submission && next.status === "DENIED" ? { submission } : {}),
     }) }).where(eq(s.claims.id, claimId));
-    return { encounterId, claimId, version, status, totalChargeCents,
+    return { encounterId, claimId, version: next.version, status: next.status, totalChargeCents,
       totalUnits: applied.lines.reduce((sum, line) => sum + line.units, 0), lines: applied.lines, ...run };
   });
 }

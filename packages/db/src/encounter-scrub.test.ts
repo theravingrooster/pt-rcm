@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq, inArray } from "drizzle-orm";
-import { ClaimNotSubmittable, ClaimStatusSchema, type EncounterIngestInput } from "@pt-rcm/domain";
-import { createDatabase, getClaimDocument, scrubEncounter, submitScrubbedClaim, upsertEncounter } from "./index.js";
+import { ClaimNotSubmittable, ClaimStatusSchema, IllegalClaimTransition, type EncounterIngestInput } from "@pt-rcm/domain";
+import { completeTask, createDatabase, getClaimDocument, listTasks, scrubEncounter, submitScrubbedClaim, transitionStoredClaim, upsertEncounter } from "./index.js";
 import { FixtureClearinghouse } from "@pt-rcm/clearinghouse";
 import * as ruleFireRepository from "./rule-fire-repository.js";
 import * as s from "./schema.js";
@@ -39,6 +39,9 @@ describe.skipIf(!url)("transactional PT scrub", () => {
           const claims = await tx.select({ id: s.claims.id }).from(s.claims).where(inArray(s.claims.encounterId, encounterIds));
           if (claims.length) {
             const claimIds = claims.map((row) => row.id);
+            const tasks = await tx.select({ id: s.tasks.id }).from(s.tasks).where(inArray(s.tasks.claimId, claimIds));
+            if (tasks.length) await tx.delete(s.auditEvents).where(inArray(s.auditEvents.entityId, tasks.map((task) => task.id)));
+            await tx.delete(s.tasks).where(inArray(s.tasks.claimId, claimIds));
             await tx.delete(s.auditEvents).where(inArray(s.auditEvents.entityId, claimIds));
             await tx.delete(s.ruleFires).where(inArray(s.ruleFires.claimId, claimIds));
             await tx.delete(s.claimLines).where(inArray(s.claimLines.claimId, claimIds));
@@ -150,7 +153,7 @@ describe.skipIf(!url)("transactional PT scrub", () => {
     expect((await stored(first.claimId)).fires).toHaveLength(8);
   });
 
-  it.each(["SUBMITTED", "PAID"] as const)("rejects re-scrub after %s and respects organization scope", async (status) => {
+  it.each(["SUBMITTED", "ACCEPTED", "REJECTED", "PAID", "PATIENT_BALANCE", "SHADOWED"] as const)("rejects re-scrub after %s and respects organization scope", async (status) => {
     const { encounterId } = await create();
     const first = await scrub(encounterId);
     await connection.db.update(s.claims).set({ status }).where(eq(s.claims.id, first.claimId));
@@ -344,6 +347,114 @@ describe.skipIf(!url)("transactional PT scrub", () => {
       submit.mockRestore();
       expect((await stored(scrubbed.claimId)).claim).toMatchObject({ status: "SCRUBBED" });
       expect(await connection.db.select().from(s.auditEvents).where(eq(s.auditEvents.entityId, scrubbed.claimId))).toEqual([]);
+    });
+  });
+
+  describe("claim lifecycle and operator tasks", () => {
+    const change = (id: string, status: Parameters<typeof transitionStoredClaim>[3]) => transitionStoredClaim(connection.db, organizationId, id, status);
+    const tasksFor = async (id: string) => (await listTasks(connection.db, organizationId)).filter((task) => task.claimId === id);
+    async function submitted() {
+      const { encounterId } = await create();
+      const claim = await scrub(encounterId);
+      const clearinghouse = new FixtureClearinghouse();
+      await submitScrubbedClaim(connection.db, organizationId, claim.claimId, { adapter: "fixture", clearinghouse });
+      return { ...claim, clearinghouse };
+    }
+
+    it("concurrent blocked scrubs open one RULE_BLOCK task, and recovery does not silently close it", async () => {
+      const body = input(); delete body.planOfCare;
+      const { encounterId, patientId } = await create(body);
+      const results = await Promise.all([scrub(encounterId), scrub(encounterId)]);
+      expect(results[0]!.claimId).toBe(results[1]!.claimId);
+      const claimId = results[0]!.claimId;
+      expect(await tasksFor(claimId)).toMatchObject([{ kind: "RULE_BLOCK", status: "OPEN", owner: "OPERATOR", reason: expect.stringContaining("POC_INVALID") }]);
+      await connection.db.insert(s.plansOfCare).values({ patientId, signedDate: body.dateOfService, certifyingNpi: "0000000003", expiresOn: null });
+      expect(await scrub(encounterId)).toMatchObject({ claimId, status: "SCRUBBED", version: 1 });
+      expect(await tasksFor(claimId)).toHaveLength(1);
+    });
+
+    it("completes a task once, audits it atomically, and allows a later block to open a new task", async () => {
+      const body = input(); delete body.planOfCare;
+      const { encounterId } = await create(body); const { claimId } = await scrub(encounterId);
+      const [task] = await tasksFor(claimId);
+      const before = await stored(claimId);
+      const results = await Promise.all([1, 2].map(() => completeTask(connection.db, organizationId, task!.id)));
+      expect(results).toEqual([ { ...task, status: "DONE" }, { ...task, status: "DONE" } ]);
+      expect(await tasksFor(claimId)).toEqual([]);
+      expect((await listTasks(connection.db, organizationId, "DONE")).filter((row) => row.claimId === claimId)).toEqual([{ ...task, status: "DONE" }]);
+      expect(await stored(claimId)).toEqual(before);
+      const audits = await connection.db.select().from(s.auditEvents).where(eq(s.auditEvents.entityId, task!.id));
+      expect(audits).toMatchObject([{ actor: "SYN-OPERATOR", action: "TASK_COMPLETED", entity: "Task", at: expect.stringMatching(/Z$/),
+        detailJson: { claimId, kind: "RULE_BLOCK", from: "OPEN", to: "DONE" } }]);
+      await scrub(encounterId);
+      const reopened = await tasksFor(claimId);
+      expect(reopened).toHaveLength(1);
+      expect(reopened[0]!.id).not.toBe(task!.id);
+    });
+
+    it("scopes task listing and completion to the server organization", async () => {
+      const body = input(); delete body.planOfCare;
+      const { encounterId } = await create(body); const { claimId } = await scrub(encounterId);
+      const [task] = await tasksFor(claimId);
+      expect((await listTasks(connection.db, seedOrganization.id)).some((row) => row.id === task!.id)).toBe(false);
+      await expect(completeTask(connection.db, seedOrganization.id, task!.id)).rejects.toMatchObject({ status: 404, code: "TASK_NOT_FOUND" });
+      await expect(completeTask(connection.db, organizationId, randomUUID())).rejects.toMatchObject({ status: 404 });
+      expect(await tasksFor(claimId)).toEqual([task]);
+      expect(await connection.db.select().from(s.auditEvents).where(eq(s.auditEvents.entityId, task!.id))).toEqual([]);
+    });
+
+    it.each([
+      ["DENIED", "DENIAL_REVIEW"], ["PATIENT_BALANCE", "PATIENT_INVOICE"], ["PAID", null],
+    ] as const)("records ACCEPTED -> %s and creates the corresponding task", async (status, kind) => {
+      const claim = await submitted();
+      await change(claim.claimId, "ACCEPTED");
+      expect(await change(claim.claimId, status)).toMatchObject({ status, version: 1 });
+      const tasks = await tasksFor(claim.claimId);
+      if (kind) expect(tasks).toMatchObject([{ kind, status: "OPEN", owner: "OPERATOR" }]);
+      else expect(tasks).toEqual([]);
+      await expect(change(claim.claimId, status)).rejects.toBeInstanceOf(IllegalClaimTransition);
+      expect(await tasksFor(claim.claimId)).toEqual(tasks);
+      expect(claim.clearinghouse.calls).toHaveLength(1); // Recording outcomes performs no I/O.
+    });
+
+    it("denial retries keep identity and increment version only after a successful scrub", async () => {
+      const claim = await submitted();
+      await change(claim.claimId, "ACCEPTED"); await change(claim.claimId, "DENIED");
+      const before = await stored(claim.claimId);
+      await connection.db.update(s.claimLines).set({ units: 3 }).where(eq(s.claimLines.id, before.lines[0]!.id));
+      expect(await scrub(claim.encounterId)).toMatchObject({ claimId: claim.claimId, status: "DENIED", version: 1, submissionAllowed: false });
+      expect((await tasksFor(claim.claimId)).map((task) => task.kind).sort()).toEqual(["DENIAL_REVIEW", "RULE_BLOCK"]);
+      expect((await stored(claim.claimId)).claim!.snapshotJson.submission).toEqual(before.claim!.snapshotJson.submission);
+      await connection.db.update(s.claimLines).set({ units: 2 }).where(eq(s.claimLines.id, before.lines[0]!.id));
+      expect(await scrub(claim.encounterId)).toMatchObject({ claimId: claim.claimId, status: "SCRUBBED", version: 2 });
+      expect(await scrub(claim.encounterId)).toMatchObject({ claimId: claim.claimId, status: "SCRUBBED", version: 2 });
+      const corrected = await stored(claim.claimId);
+      expect(corrected.claim!.snapshotJson.submission).toBeUndefined();
+      expect(corrected.claim!.snapshotJson.submissionHistory).toEqual([{ version: 1, submission: before.claim!.snapshotJson.submission }]);
+      expect((await submitScrubbedClaim(connection.db, organizationId, claim.claimId, { adapter: "fixture", clearinghouse: claim.clearinghouse })).status).toBe("SUBMITTED");
+      expect((await stored(claim.claimId)).claim!.version).toBe(2);
+      expect(claim.clearinghouse.calls).toHaveLength(2);
+    });
+
+    it("requires REJECTED -> DRAFT before re-scrubbing and resubmitting", async () => {
+      const claim = await submitted(); await change(claim.claimId, "REJECTED");
+      await expect(scrub(claim.encounterId)).rejects.toMatchObject({ status: 409 });
+      expect(await change(claim.claimId, "DRAFT")).toMatchObject({ status: "DRAFT", version: 1 });
+      expect(await scrub(claim.encounterId)).toMatchObject({ status: "SCRUBBED", version: 1, claimId: claim.claimId });
+      await submitScrubbedClaim(connection.db, organizationId, claim.claimId, { adapter: "fixture", clearinghouse: claim.clearinghouse });
+      expect(claim.clearinghouse.calls).toHaveLength(2);
+    });
+
+    it("rejects skipped, cross-organization, and superseded transitions without tasks or state changes", async () => {
+      const claim = await submitted(); const before = await stored(claim.claimId);
+      await expect(change(claim.claimId, "DENIED")).rejects.toBeInstanceOf(IllegalClaimTransition);
+      expect(await stored(claim.claimId)).toEqual(before);
+      expect(await tasksFor(claim.claimId)).toEqual([]);
+      await expect(transitionStoredClaim(connection.db, seedOrganization.id, claim.claimId, "ACCEPTED")).rejects.toMatchObject({ status: 404 });
+      await expect(change(randomUUID(), "ACCEPTED")).rejects.toMatchObject({ status: 404 });
+      const body = input(); const { encounterId } = await create(body); const first = await scrub(encounterId);
+      body.minuteLines = [{ cptCode: "97110", minutes: 8 }]; await create(body); await scrub(encounterId);
+      await expect(change(first.claimId, "DRAFT")).rejects.toMatchObject({ status: 409, code: "CLAIM_SUPERSEDED" });
     });
   });
 

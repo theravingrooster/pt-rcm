@@ -1,4 +1,4 @@
-import { IdSchema } from "@pt-rcm/domain";
+import { IdSchema, IllegalClaimTransition } from "@pt-rcm/domain";
 import { createDatabase, DEFAULT_INGEST_ORGANIZATION_ID, EncounterScrubError, scrubEncounter } from "@pt-rcm/db";
 
 export const runtime = "nodejs";
@@ -13,6 +13,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       process.env.INGEST_ORGANIZATION_ID ?? DEFAULT_INGEST_ORGANIZATION_ID, parsed.data);
     return Response.json(result);
   } catch (error) {
+    if (error instanceof IllegalClaimTransition) return Response.json({ error: error.code, message: error.message }, { status: 409 });
     if (error instanceof EncounterScrubError) return Response.json({ error: error.code, message: error.message }, { status: error.status });
     return Response.json({ error: "SCRUB_FAILED" }, { status: 500 });
   }
