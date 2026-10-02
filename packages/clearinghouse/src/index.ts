@@ -29,7 +29,7 @@ export class FixtureClearinghouse implements ClearinghousePort {
     return { eligible: request.memberId.startsWith("SYN"), memberId: request.memberId };
   }
 
-  async submitClaim(): Promise<SubmitAck> {
+  async submitClaim(_document: unknown): Promise<SubmitAck> {
     this.calls.push("submit");
     return { icn: "SYN-ICN", status: "accepted" };
   }

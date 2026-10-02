@@ -18,11 +18,16 @@ That enables pnpm 9.15.0, installs dependencies, and runs the domain test. Node 
 
 ```bash
 pnpm install
-docker compose up -d
+docker compose up -d --wait
 pnpm db:migrate
+pnpm db:seed
 pnpm test
+TEST_DATABASE_URL=postgres://pt:pt@localhost:5432/pt_rcm pnpm --filter @pt-rcm/db test
+pnpm typecheck
 pnpm dev
 ```
+
+Parse inputs with the schemas exported by `@pt-rcm/domain` before persistence. Generate migrations with `pnpm db:generate`. `DATABASE_URL` overrides the local Compose connection. The seed is idempotent and adds no patients. Database integration tests require `TEST_DATABASE_URL` and roll back their clinical fixtures.
 
 ## What this does not do
 

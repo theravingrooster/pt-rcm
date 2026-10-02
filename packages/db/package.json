@@ -3,17 +3,27 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts"
+  },
   "scripts": {
-    "generate": "drizzle-kit generate",
-    "migrate": "node -e \"if (!process.env.DATABASE_URL) { console.log('skip migrate: DATABASE_URL unset'); process.exit(0) }\" && drizzle-kit migrate",
+    "generate": "node --import tsx ./node_modules/drizzle-kit/bin.cjs generate",
+    "migrate": "node --import tsx ./node_modules/drizzle-kit/bin.cjs migrate",
+    "seed": "node --import tsx src/seed.ts",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@pt-rcm/domain": "workspace:*",
     "drizzle-orm": "^0.36.4",
     "postgres": "^3.4.5"
   },
   "devDependencies": {
+    "@types/node": "^22.10.0",
     "drizzle-kit": "^0.28.1",
+    "tsx": "^4.19.2",
+    "vitest": "^2.1.8",
     "typescript": "^5.6.3"
   }
 }

@@ -1,0 +1,40 @@
+name: Test
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: postgres://pt:pt@localhost:5432/pt_rcm
+      TEST_DATABASE_URL: postgres://pt:pt@localhost:5432/pt_rcm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Set up workspace
+        run: bash scripts/cloud-setup.sh
+      - name: Start PostgreSQL 16
+        run: docker compose up -d --wait
+      - name: Apply migrations and confirm rerun
+        run: |
+          pnpm db:migrate
+          pnpm db:migrate
+      - name: Seed synthetic configuration twice
+        run: |
+          pnpm db:seed
+          pnpm db:seed
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: Check migration drift
+        run: |
+          pnpm db:generate
+          test -z "$(git status --porcelain -- packages/db/drizzle)"
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker compose down -v
