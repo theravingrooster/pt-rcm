@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq, inArray } from "drizzle-orm";
-import type { EncounterIngestInput } from "@pt-rcm/domain";
-import { createDatabase, scrubEncounter, upsertEncounter } from "./index.js";
+import { ClaimNotSubmittable, type EncounterIngestInput } from "@pt-rcm/domain";
+import { createDatabase, getClaimDocument, scrubEncounter, upsertEncounter } from "./index.js";
 import * as ruleFireRepository from "./rule-fire-repository.js";
 import * as s from "./schema.js";
 import { seedSyntheticData } from "./seed-database.js";
@@ -185,6 +185,73 @@ describe.skipIf(!url)("transactional PT scrub", () => {
     const over = await scrub(current.encounterId);
     expect(over.status).toBe("BLOCKED");
     expect(over.blocks).toEqual(expect.arrayContaining([expect.objectContaining({ code: "MISSING_KX", detail: { projectedCents: 253500, thresholdCents: 248000 } })]));
+  });
+
+  describe("claim document reads", () => {
+    it("projects the applied GP downgrade and three allocated units without writing anything", async () => {
+      const { encounterId } = await create();
+      const result = await scrub(encounterId);
+      const before = await stored(result.claimId);
+      const document = await getClaimDocument(connection.db, organizationId, result.claimId);
+      expect(document).toMatchObject({
+        claimId: result.claimId, claimVersion: 1, totalChargeCents: 13500,
+        benefitsAssigned: true, acceptAssignment: true,
+        billingProvider: { npi: seedOrganization.billingNpi, tin: seedOrganization.taxId },
+        renderingProvider: { npi: seedProviders[0]!.npi },
+        receiver: { id: seedPayers[0]!.id },
+        diagnoses: [{ icd10: "M25.511", pointer: 0 }],
+      });
+      expect(document.lines).toEqual(result.lines.map(({ cptCode, modifiers, units, diagnosisPointers }, index) => ({
+        cptCode, modifiers, units, diagnosisPointers, chargeCents: before.lines[index]!.chargeCents,
+      })));
+      expect(document.lines.map((line) => [line.units, line.modifiers])).toEqual([[2, ["GP"]], [1, ["GP"]]]);
+      expect(await getClaimDocument(connection.db, organizationId, result.claimId)).toEqual(document);
+      expect(await stored(result.claimId)).toEqual(before);
+    });
+
+    it.each(["BLOCKED", "DRAFT", "SHADOWED"] as const)("refuses a %s claim with ClaimNotSubmittable", async (status) => {
+      const body = input(); delete body.planOfCare;
+      const { encounterId } = await create(body);
+      const result = await scrub(encounterId);
+      if (status !== "BLOCKED") await connection.db.update(s.claims).set({ status }).where(eq(s.claims.id, result.claimId));
+      await expect(getClaimDocument(connection.db, organizationId, result.claimId)).rejects.toBeInstanceOf(ClaimNotSubmittable);
+    });
+
+    it("keeps the old version's service date, diagnoses and coverage after ingestion edits", async () => {
+      const body = input();
+      const { encounterId } = await create(body);
+      const result = await scrub(encounterId);
+      const original = await getClaimDocument(connection.db, organizationId, result.claimId);
+      body.dateOfService = "2026-10-02";
+      body.diagnoses = ["M25.512"];
+      body.patient.coverage.memberId = "SYN-CHANGED-MEMBER";
+      body.minuteLines = [{ cptCode: "97110", minutes: 8 }];
+      await create(body);
+      expect(await getClaimDocument(connection.db, organizationId, result.claimId)).toEqual(original);
+    });
+
+    it("uses only billed lines and preserves a zero-unit source in the claim snapshot", async () => {
+      const body = input(); body.minuteLines = [{ cptCode: "97110", minutes: 23 }, { cptCode: "97140", minutes: 8 }];
+      const { encounterId } = await create(body);
+      const result = await scrub(encounterId);
+      const document = await getClaimDocument(connection.db, organizationId, result.claimId);
+      expect(document.lines).toMatchObject([{ cptCode: "97110", units: 2, modifiers: ["GP"] }]);
+      expect(document.lines).toHaveLength(1);
+      expect(document.totalChargeCents).toBe(9000);
+    });
+
+    it("returns not found for a missing claim or the wrong organization", async () => {
+      const { encounterId } = await create(); const result = await scrub(encounterId);
+      await expect(getClaimDocument(connection.db, seedOrganization.id, result.claimId)).rejects.toMatchObject({ status: 404, code: "CLAIM_NOT_FOUND" });
+      await expect(getClaimDocument(connection.db, organizationId, randomUUID())).rejects.toMatchObject({ status: 404, code: "CLAIM_NOT_FOUND" });
+    });
+
+    it.each([{ units: 3 }, { modifiers: [] }, { chargeCents: 1 }, { diagnosisPointers: [99] }])("rejects saved line changes after the scrub %j", async (changes) => {
+      const { encounterId } = await create(); const result = await scrub(encounterId);
+      const saved = await stored(result.claimId);
+      await connection.db.update(s.claimLines).set(changes).where(eq(s.claimLines.id, saved.lines[0]!.id));
+      await expect(getClaimDocument(connection.db, organizationId, result.claimId)).rejects.toMatchObject({ status: 422, code: "INVALID_CLAIM_DOCUMENT" });
+    });
   });
 
   it("rolls back claim creation when RuleFire persistence fails", async () => {

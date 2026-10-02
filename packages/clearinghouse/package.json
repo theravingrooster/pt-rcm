@@ -10,6 +10,9 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@pt-rcm/domain": "workspace:*"
+  },
   "devDependencies": {
     "typescript": "^5.6.3",
     "vitest": "^2.1.8"

@@ -33,7 +33,7 @@ jobs:
       - run: pnpm test
       - name: Build the Next.js app
         run: pnpm --filter @pt-rcm/web build
-      - name: Ingest the synthetic demo twice and scrub through HTTP
+      - name: Ingest, scrub, and read the synthetic document through HTTP
         run: |
           pnpm --filter @pt-rcm/web exec next start > /tmp/pt-rcm-web.log 2>&1 &
           web_pid=$!
@@ -63,6 +63,17 @@ jobs:
           assert.equal(scrubbed.totalChargeCents, 13500);
           assert.ok(scrubbed.lines.every(line => line.modifiers.includes('GP')));
           assert.equal(scrubbed.findings.length, 8);
+          const documentResponse = await fetch(`http://localhost:3000/api/claims/${scrubbed.claimId}/document`);
+          assert.equal(documentResponse.status, 200);
+          assert.equal(documentResponse.headers.get('cache-control'), 'no-store');
+          const pretty = await documentResponse.text();
+          const document = JSON.parse(pretty);
+          assert.equal(pretty, JSON.stringify(document, null, 2) + '\n');
+          assert.deepEqual(document.lines.map(line => [line.units, line.modifiers]), [[2, ['GP']], [1, ['GP']]]);
+          assert.equal(document.totalChargeCents, 13500);
+          assert.equal(document.billingProvider.tin, 'SYN-TAX-1');
+          assert.equal(document.benefitsAssigned, true);
+          assert.equal(document.acceptAssignment, true);
           JS
       - name: Check migration drift
         run: |
