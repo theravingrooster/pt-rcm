@@ -1,6 +1,7 @@
 {
   "name": "pt-rcm",
   "private": true,
+  "type": "module",
   "version": "0.0.0",
   "description": "Outpatient PT billing rules prototype. Synthetic data, fixture clearinghouse, no live claims.",
   "engines": {
@@ -16,6 +17,7 @@
     "db:generate": "pnpm --filter @pt-rcm/db generate",
     "db:migrate": "pnpm --filter @pt-rcm/db migrate",
     "db:seed": "pnpm --filter @pt-rcm/db seed",
+    "demo": "pnpm --filter @pt-rcm/web exec node --import tsx ../../scripts/demo.ts",
     "seed:demo": "pnpm --filter @pt-rcm/web seed:demo"
   }
 }
