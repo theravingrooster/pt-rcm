@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { allocateUnits, fixtureLineChargeCents, getCptFixture, loadMedicareMinuteLadder } from "@pt-rcm/domain";
 import { applyDowngrades, runRules, toRuleFireRows } from "./index.js";
-import { authVisitsRule, coverageInactiveRule, distinctProcedureRule, eightMinuteAppliedRule, evalWithTreatmentRule, gpModifierRule, kxThresholdRule, planOfCareRule, ptPack, timedCodeCapRule, zeroMinuteTimedRule } from "./ptPack.js";
+import { authVisitsRule, coverageInactiveRule, distinctProcedureRule, eightMinuteAppliedRule, evalWithTreatmentRule, gpModifierRule, kxThresholdRule, planOfCareRule, ptPack, suggestDistinctProcedure, timedCodeCapRule, zeroMinuteTimedRule } from "./ptPack.js";
 import { makeContext, testClaimId } from "./testing/fixtures.js";
 import type { RuleContext } from "./types.js";
 
@@ -186,7 +186,38 @@ describe("distinct-procedure", () => {
     expect(distinctProcedureRule.evaluate(context([{ cptCode: "97110", minutes: 15 }, { cptCode, minutes: 15 }]))).toEqual({ outcome: "PASS" });
   });
   it("still flags an unmarked pair among three codes", () => {
-    expect(distinctProcedureRule.evaluate(context([{ cptCode: "97110", minutes: 15, modifiers: ["59"] }, { cptCode: "97140", minutes: 15 }, { cptCode: "97530", minutes: 15 }]))).toMatchObject({ outcome: "FLAG", code: "MISSING_59" });
+    expect(distinctProcedureRule.evaluate(context([{ cptCode: "97110", minutes: 15, modifiers: ["59"] }, { cptCode: "97140", minutes: 15 }, { cptCode: "97530", minutes: 15 }]))).toMatchObject({
+      outcome: "FLAG", code: "MISSING_59", detail: { suggestedModifier: "59", cptCodes: ["97140", "97530"], suggestedLineIndex: 2 },
+    });
+  });
+  it("records a specific suggestion without adding it to the claim draft", () => {
+    const ctx = context([{ cptCode: "97110", minutes: 20, modifiers: ["GP"] }, { cptCode: "97530", minutes: 20, modifiers: ["GP"] }]);
+    const originalDraft = structuredClone(ctx.draftClaim);
+    const suggestion = suggestDistinctProcedure(ctx);
+    const run = runRules([distinctProcedureRule], ctx);
+    expect(suggestion).toEqual(distinctProcedureRule.evaluate(ctx));
+    expect(run.findings).toHaveLength(1);
+    expect(run.findings[0]).toMatchObject({
+      outcome: "FLAG", code: "MISSING_59", detail: { suggestedModifier: "59", cptCodes: ["97110", "97530"], suggestedLineIndex: 1 },
+    });
+    expect(suggestion.outcome).toBe("FLAG");
+    if (suggestion.outcome === "FLAG") expect(suggestion.message).toContain("CPT 97110 and CPT 97530");
+    expect(toRuleFireRows(testClaimId, run)[0]!.detailJson).toMatchObject({
+      suggestedModifier: "59", cptCodes: ["97110", "97530"], suggestedLineIndex: 1,
+    });
+    expect(run.downgrades).toEqual([]);
+    expect(applyDowngrades(ctx.draftClaim, run.downgrades)).toEqual(originalDraft);
+    expect(ctx.draftClaim).toEqual(originalDraft);
+    expect(ctx.draftClaim.lines.map((line) => line.modifiers)).toEqual([["GP"], ["GP"]]);
+  });
+  it("selects the first two distinct unmarked timed codes and stable second-line index", () => {
+    const ctx = context([
+      { cptCode: "97110", minutes: 8 }, { cptCode: "97110", minutes: 8 },
+      { cptCode: "97530", minutes: 8 }, { cptCode: "97140", minutes: 8 },
+    ]);
+    expect(distinctProcedureRule.evaluate(ctx)).toMatchObject({
+      outcome: "FLAG", detail: { suggestedModifier: "59", cptCodes: ["97110", "97530"], suggestedLineIndex: 2 },
+    });
   });
 });
 

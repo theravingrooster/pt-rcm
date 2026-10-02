@@ -21,11 +21,24 @@ export default async function EncounterPage({ params }: { params: Promise<{ id: 
   const ruleIds = [...new Set(findings.map((finding) => finding.ruleId))].sort();
   const activeFindings = new Map(findings.filter((finding) => !finding.shadow).map((finding) => [finding.ruleId, finding]));
   const shadowFindings = new Map(findings.filter((finding) => finding.shadow).map((finding) => [finding.ruleId, finding]));
-  const displayFinding = (finding: (typeof findings)[number] | undefined) => finding ? <>
-    <Badge value={finding.outcome} /> {typeof finding.detailJson.code === "string" ? <strong className="mono">{finding.detailJson.code}</strong> : null}
-    <span className="subtext">{String(finding.detailJson.message ?? finding.detailJson.description ?? "Passed")}</span>
-    <span className="subtext mono">Rule v{finding.ruleVersion} · {finding.createdAt.replace("T", " ").replace("Z", "")} UTC</span>
-  </> : <span className="muted">Not run</span>;
+  const canApplyModifier = Boolean(latestClaim && ["DRAFT", "BLOCKED", "SCRUBBED"].includes(latestClaim.status));
+  const suggestedModifier = (finding: (typeof findings)[number] | undefined) => {
+    if (finding?.ruleId !== "distinct-procedure" || finding.outcome !== "FLAG" || finding.detailJson.code !== "MISSING_59") return null;
+    const detail = finding.detailJson;
+    if (detail.suggestedModifier !== "59" || !Array.isArray(detail.cptCodes) || detail.cptCodes.length !== 2
+      || !detail.cptCodes.every((code) => typeof code === "string")) return null;
+    return detail.cptCodes as [string, string];
+  };
+  const displayFinding = (finding: (typeof findings)[number] | undefined) => {
+    if (!finding) return <span className="muted">Not run</span>;
+    const suggestion = suggestedModifier(finding);
+    return <>
+      <Badge value={finding.outcome} /> {typeof finding.detailJson.code === "string" ? <strong className="mono">{finding.detailJson.code}</strong> : null}
+      <span className="subtext">{String(finding.detailJson.message ?? finding.detailJson.description ?? "Passed")}</span>
+      {suggestion ? <span className="subtext">Suggested modifier <strong className="mono">59</strong> on CPT <span className="mono">{suggestion[1]}</span> for the <span className="mono">{suggestion.join(" / ")}</span> pair</span> : null}
+      <span className="subtext mono">Rule v{finding.ruleVersion} · {finding.createdAt.replace("T", " ").replace("Z", "")} UTC</span>
+    </>;
+  };
   return <>
     <p className="breadcrumb"><Link href="/">Encounters</Link> / <span>{encounter.externalId}</span></p>
     <div className="page-heading"><div><p className="eyebrow">Encounter</p><h1>{patient.firstName} {patient.lastName}</h1><p className="muted mono">{encounter.externalId}</p></div>
@@ -53,7 +66,12 @@ export default async function EncounterPage({ params }: { params: Promise<{ id: 
     <section className="panel"><div className="section-heading"><h2>Rule comparison</h2><span className="muted">Latest active and shadow findings per rule. Shadow results do not change the claim.</span></div>
       {ruleIds.length ? <TableFrame label="Active and shadow rule findings"><table><caption className="sr-only">Latest active and shadow rule results by rule ID</caption>
         <thead><tr><th scope="col">Rule</th><th scope="col">Active finding{rulePacks.active ? <span className="subtext">{rulePacks.active}</span> : null}</th><th scope="col">Shadow finding (simulation){rulePacks.shadow ? <span className="subtext">{rulePacks.shadow}</span> : null}</th></tr></thead>
-        <tbody>{ruleIds.map((ruleId) => <tr key={ruleId}><th scope="row" className="mono">{ruleId}</th><td>{displayFinding(activeFindings.get(ruleId))}</td><td>{displayFinding(shadowFindings.get(ruleId))}</td></tr>)}</tbody></table></TableFrame>
+        <tbody>{ruleIds.map((ruleId) => {
+          const active = activeFindings.get(ruleId);
+          return <tr key={ruleId}><th scope="row" className="mono">{ruleId}</th><td>{displayFinding(active)}
+            {latestClaim && canApplyModifier && suggestedModifier(active) ? <div className="suggestion-action"><ActionForm action="modifier" endpoint={`/api/claims/${latestClaim.id}/modifier`} label="apply suggested modifier" /></div> : null}
+          </td><td>{displayFinding(shadowFindings.get(ruleId))}</td></tr>;
+        })}</tbody></table></TableFrame>
         : <EmptyState>No findings yet. Use Scrub encounter to run the existing rule pack.</EmptyState>}
     </section>
     {claims.length > 1 ? <p className="version-links">Claim versions: {claims.map((claim) => <Link key={claim.id} href={`/claims/${claim.id}`}>v{claim.version} · {claim.status}</Link>)}</p> : null}

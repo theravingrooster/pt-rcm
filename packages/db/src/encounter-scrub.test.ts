@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq, inArray } from "drizzle-orm";
 import { ClaimNotSubmittable, ClaimStatusSchema, IllegalClaimTransition, type EncounterIngestInput } from "@pt-rcm/domain";
-import { checkCoverageEligibility, completeTask, createDatabase, getClaimDocument, listTasks, scrubEncounter, submitScrubbedClaim, transitionStoredClaim, upsertEncounter } from "./index.js";
+import { applySuggestedModifier, checkCoverageEligibility, completeTask, createDatabase, getClaimDocument, listTasks, scrubEncounter, submitScrubbedClaim, transitionStoredClaim, upsertEncounter } from "./index.js";
 import { FixtureClearinghouse } from "@pt-rcm/clearinghouse";
 import * as ruleFireRepository from "./rule-fire-repository.js";
 import * as s from "./schema.js";
@@ -92,6 +92,50 @@ describe.skipIf(!url)("transactional PT scrub", () => {
     expect(repeat).toMatchObject({ claimId: result.claimId, version: 1, status: "SCRUBBED", totalUnits: 3 });
     expect((await stored(result.claimId)).fires).toHaveLength(16);
     expect(repeat.findings.find((finding) => finding.ruleId === "gp-modifier")).toMatchObject({ outcome: "PASS" });
+  });
+
+  it("a modifier 59 suggestion alone leaves the saved claim document unchanged", async () => {
+    const { encounterId } = await create();
+    const scrubbed = await scrub(encounterId);
+    expect(scrubbed.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ruleId: "distinct-procedure", outcome: "FLAG", code: "MISSING_59",
+        detail: { suggestedModifier: "59", cptCodes: ["97110", "97530"], suggestedLineIndex: 1 } }),
+    ]));
+    const before = await getClaimDocument(connection.db, organizationId, scrubbed.claimId);
+    const after = await getClaimDocument(connection.db, organizationId, scrubbed.claimId);
+    expect(after).toEqual(before);
+    expect(after.lines.map((line) => line.modifiers)).toEqual([["GP"], ["GP"]]);
+    expect((await stored(scrubbed.claimId)).fires.find((fire) => fire.ruleId === "distinct-procedure"))
+      .toMatchObject({ outcome: "FLAG", detailJson: { suggestedModifier: "59", cptCodes: ["97110", "97530"], suggestedLineIndex: 1 } });
+    expect(await connection.db.select().from(s.auditEvents).where(eq(s.auditEvents.entityId, scrubbed.claimId))).toEqual([]);
+  });
+
+  it("operator applies 59 to the suggested line, re-scrubs, audits, and cannot edit after submission", async () => {
+    const { encounterId } = await create();
+    const initial = await scrub(encounterId);
+    const before = await getClaimDocument(connection.db, organizationId, initial.claimId);
+    const applied = await applySuggestedModifier(connection.db, organizationId, initial.claimId);
+    expect(applied).toMatchObject({ claimId: initial.claimId, version: 1, status: "SCRUBBED", modifier: "59",
+      cptCodes: ["97110", "97530"], lineIndex: 1 });
+    expect(applied.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ruleId: "distinct-procedure", outcome: "PASS", shadow: false }),
+    ]));
+    const after = await getClaimDocument(connection.db, organizationId, initial.claimId);
+    expect(after.lines.map((line) => line.modifiers)).toEqual([["GP"], ["GP", "59"]]);
+    expect(after.lines.map(({ modifiers: _modifiers, ...line }) => line))
+      .toEqual(before.lines.map(({ modifiers: _modifiers, ...line }) => line));
+    const audits = await connection.db.select().from(s.auditEvents).where(eq(s.auditEvents.entityId, initial.claimId));
+    expect(audits).toMatchObject([{ actor: "SYN-OPERATOR", action: "MODIFIER_APPLIED_BY_OPERATOR", entity: "Claim",
+      detailJson: { modifier: "59", cptCodes: ["97110", "97530"], lineIndex: 1, resultStatus: "SCRUBBED" } }]);
+    await expect(applySuggestedModifier(connection.db, organizationId, initial.claimId))
+      .rejects.toMatchObject({ status: 409, code: "MODIFIER_NOT_SUGGESTED" });
+    await submitScrubbedClaim(connection.db, organizationId, initial.claimId,
+      { adapter: "fixture", clearinghouse: new FixtureClearinghouse() });
+    await expect(applySuggestedModifier(connection.db, organizationId, initial.claimId))
+      .rejects.toMatchObject({ status: 409, code: "MODIFIER_UNAVAILABLE" });
+    expect((await stored(initial.claimId)).lines.map((line) => line.modifiers)).toEqual([["GP"], ["GP", "59"]]);
+    expect((await connection.db.select().from(s.auditEvents).where(eq(s.auditEvents.entityId, initial.claimId)))
+      .filter((event) => event.action === "MODIFIER_APPLIED_BY_OPERATOR")).toHaveLength(1);
   });
 
   it("the same shoulder with four stored units blocks OVERBILLED_UNITS without silently reallocating", async () => {

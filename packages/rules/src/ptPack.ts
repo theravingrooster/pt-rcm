@@ -1,5 +1,5 @@
 import { allocateUnits, loadMedicareMinuteLadder, MEDICARE_PT_SLP_KX_THRESHOLD_2026_CENTS, unitsLeftOnTable } from "@pt-rcm/domain";
-import type { Rule, RuleResult } from "./types.js";
+import type { Rule, RuleContext, RuleResult } from "./types.js";
 
 // CPT is an AMA-licensed code set. These local fixture codes are not a
 // redistribution of the CPT data file. This is the requested prototype policy.
@@ -121,13 +121,31 @@ export const evalWithTreatmentRule: Rule = Object.freeze<Rule>({
   },
 });
 
+export type DistinctProcedureSuggestion = { outcome: "PASS" } | {
+  outcome: "FLAG"; code: "MISSING_59"; message: string;
+  detail: { suggestedModifier: "59"; cptCodes: [string, string]; suggestedLineIndex: number };
+};
+
+/** Propose a reviewable line target without changing modifiers or the claim draft. */
+export function suggestDistinctProcedure(ctx: Pick<RuleContext, "draftClaim" | "minuteLines">): DistinctProcedureSuggestion {
+  const firstUnmarkedIndexByCode = new Map<string, number>();
+  ctx.draftClaim.lines.forEach((line, index) => {
+    if (ctx.minuteLines[index]?.timed && !line.modifiers.some((modifier) => distinctModifiers.has(modifier))
+      && !firstUnmarkedIndexByCode.has(line.cptCode)) firstUnmarkedIndexByCode.set(line.cptCode, index);
+  });
+  const pair = [...firstUnmarkedIndexByCode].slice(0, 2);
+  if (pair.length < 2) return { outcome: "PASS" };
+  const [[firstCode], [secondCode, suggestedLineIndex]] = pair as [[string, number], [string, number]];
+  return {
+    outcome: "FLAG", code: "MISSING_59",
+    message: `CPT ${firstCode} and CPT ${secondCode} have no distinct-procedure modifier; modifier 59 would be required if billed as distinct procedures. Review before applying.`,
+    detail: { suggestedModifier: "59", cptCodes: [firstCode, secondCode], suggestedLineIndex },
+  };
+}
+
 export const distinctProcedureRule: Rule = Object.freeze<Rule>({
   id: "distinct-procedure", version: 1, description: "Flag pairs of different timed codes with no supplied distinct-procedure modifier.",
-  evaluate(ctx): RuleResult {
-    const unmarkedCodes = new Set(ctx.draftClaim.lines.filter((line, index) => ctx.minuteLines[index]?.timed
-      && !line.modifiers.some((modifier) => distinctModifiers.has(modifier))).map((line) => line.cptCode));
-    return unmarkedCodes.size >= 2 ? { outcome: "FLAG", code: "MISSING_59", message: "Two timed procedures have neither 59 nor an XE/XP/XS/XU modifier; review without adding one automatically." } : { outcome: "PASS" };
-  },
+  evaluate: suggestDistinctProcedure,
 });
 
 export const timedCodeCapRule: Rule = Object.freeze<Rule>({

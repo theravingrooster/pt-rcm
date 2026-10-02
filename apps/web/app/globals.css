@@ -60,6 +60,7 @@ td a { font-weight: 600; }
 .action-hint, .action-feedback { margin-top: 6px; font-size: 11px; line-height: 1.5; color: #5b6a79; overflow-wrap: anywhere; }
 .action-feedback { color: #235e45; }
 .action-feedback.failure { color: #922d35; }
+.suggestion-action { margin-top: 8px; }
 .breadcrumb { color: #647182; font-size: 11px; overflow-wrap: anywhere; }
 .facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px 24px; margin: 0 0 22px; padding: 16px; border: 1px solid #d3dbe3; background: #fff; border-radius: 5px; }
 .facts dt { font-size: 10px; color: #637183; text-transform: uppercase; letter-spacing: .7px; margin-bottom: 7px; }
