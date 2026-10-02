@@ -49,6 +49,12 @@ jobs:
           node --input-type=module <<'JS'
           import assert from 'node:assert/strict';
           import { readFile } from 'node:fs/promises';
+          const metricsResponse = await fetch('http://localhost:3000/metrics');
+          assert.equal(metricsResponse.status, 200);
+          const metricsPage = await metricsResponse.text();
+          assert.match(metricsPage, /Units left on table/);
+          assert.match(metricsPage, /\$45\.00/);
+          assert.match(metricsPage, /Patient responsibility is excluded/);
           const body = JSON.parse(await readFile('fixtures/encounters/shoulder-23min.json', 'utf8'));
           body.minuteLines = [{ cptCode: '97110', minutes: 20 }, { cptCode: '97530', minutes: 20 }];
           const ingested = await fetch('http://localhost:3000/api/encounters', {

@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { FixtureClearinghouse } from "@pt-rcm/clearinghouse";
 import type { EncounterIngestInput } from "@pt-rcm/domain";
 import { createDatabase, upsertEncounter, scrubEncounter, submitScrubbedClaim, loadFixtureRemitScripts, pollRemits, completeTask,
-  listOperatorEncounters, getOperatorEncounter, getOperatorClaim, listOperatorTasks } from "./index.js";
+  listOperatorEncounters, getOperatorEncounter, getOperatorClaim, listOperatorTasks, readOperatorMetrics } from "./index.js";
 import { seedSyntheticData } from "./seed-database.js";
 import { seedOrganization } from "./seed-data.js";
 import * as s from "./schema.js";
@@ -93,5 +93,23 @@ describe.skipIf(!url)("operator read models", () => {
     expect(await listOperatorTasks(db, other)).toEqual([]);
     expect(await getOperatorEncounter(db, other, encounterId)).toBeNull();
     expect(await getOperatorClaim(db, other, scrub.claimId)).toBeNull();
+  });
+  it("counts actual saved underbilling, stays stable on re-scrub, and scopes metrics", async () => {
+    const db = connection.db;
+    const before = await readOperatorMetrics(db, organizationId);
+    const { encounterId } = await setup();
+    const initial = await scrubEncounter(db, organizationId, encounterId);
+    expect(initial.totalUnits).toBe(3);
+    expect((await readOperatorMetrics(db, organizationId)).unitsLeftOnTable).toBe(before.unitsLeftOnTable);
+    await db.update(s.claimLines).set({ units: 1 }).where(and(
+      eq(s.claimLines.claimId, initial.claimId), eq(s.claimLines.cptCode, "97110")));
+    const underbilled = await scrubEncounter(db, organizationId, encounterId);
+    expect(underbilled).toMatchObject({ status: "SCRUBBED", totalUnits: 2, totalChargeCents: 9000 });
+    const actual = await readOperatorMetrics(db, organizationId);
+    expect(actual.unitsLeftOnTable).toBe(before.unitsLeftOnTable + 1);
+    expect(actual.centsLeftOnTable).toBe(before.centsLeftOnTable + 4500);
+    await scrubEncounter(db, organizationId, encounterId);
+    expect(await readOperatorMetrics(db, organizationId)).toEqual(actual);
+    expect((await readOperatorMetrics(db, randomUUID())).claimCount).toBe(0);
   });
 });

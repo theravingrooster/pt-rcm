@@ -5,6 +5,7 @@ export * from "./eightMinute.js";
 export * from "./claimDocument.js";
 export * from "./lifecycle.js";
 export * from "./remit.js";
+export * from "./metrics.js";
 
 export const prototype = "pt-rcm";
 

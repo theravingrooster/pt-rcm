@@ -1,0 +1,31 @@
+{
+  "externalId": "SYN-UNDERBILLED-40MIN",
+  "patient": {
+    "externalId": "SYN-PATIENT-UNDERBILLED",
+    "name": { "firstName": "SYN", "lastName": "Underbilled Demo" },
+    "dob": "2001-02-03",
+    "sex": "U",
+    "address": {
+      "line1": "2 SYN Test Way",
+      "line2": null,
+      "city": "SYN City",
+      "state": "CA",
+      "postalCode": "00000",
+      "country": "US"
+    },
+    "coverage": {
+      "payerCode": "MEDICARE",
+      "memberId": "SYN-MEMBER-UNDERBILLED",
+      "relationship": "SELF"
+    }
+  },
+  "renderingProviderNpi": "0000000003",
+  "facilityId": "00000000-0000-4000-8000-000000000002",
+  "dateOfService": "2026-10-01",
+  "diagnoses": ["M25.511"],
+  "minuteLines": [
+    { "cptCode": "97110", "minutes": 20 },
+    { "cptCode": "97530", "minutes": 20 }
+  ],
+  "planOfCare": { "signedDate": "2026-09-25", "certifyingNpi": "0000000004" }
+}

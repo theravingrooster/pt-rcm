@@ -12,6 +12,7 @@ export { TaskNotFound, listTasks, completeTask } from "./tasks.js";
 export * from "./remit-post.js";
 export * from "./remit-poll.js";
 export * from "./operator-read.js";
+export * from "./metrics-read.js";
 export * from "./rule-fire-repository.js";
 
 // Importing the package does not open a connection or contact a clearinghouse.
