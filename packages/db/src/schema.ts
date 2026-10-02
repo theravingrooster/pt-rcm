@@ -222,11 +222,16 @@ export const ruleSets = pgTable("rule_sets", {
   version: text("version").notNull().unique(),
   status: ruleSetStatus("status").notNull(),
   notes: text("notes").notNull(),
-});
+  definitionJson: jsonb("definition_json").$type<JsonObject>().notNull().default({}),
+}, (t) => [
+  uniqueIndex("rule_sets_one_active").on(t.status).where(sql`${t.status} = 'ACTIVE'`),
+  check("rule_sets_definition_object", sql`jsonb_typeof(${t.definitionJson}) = 'object'`),
+]);
 
 export const ruleFires = pgTable("rule_fires", {
   id: uuid("id").defaultRandom().primaryKey(),
   claimId: uuid("claim_id").notNull().references(() => claims.id),
+  ruleSetId: uuid("rule_set_id").references(() => ruleSets.id),
   // Identifies a versioned pure rule, not a ruleset row.
   ruleId: text("rule_id").notNull(),
   ruleVersion: text("rule_version").notNull(),
@@ -236,6 +241,7 @@ export const ruleFires = pgTable("rule_fires", {
   createdAt: utcTimestamp("created_at").notNull().default(sql`now()`),
 }, (t) => [
   index("rule_fires_claim_idx").on(t.claimId),
+  index("rule_fires_rule_set_claim_idx").on(t.ruleSetId, t.claimId),
   check("rule_fires_detail_object", sql`jsonb_typeof(${t.detailJson}) = 'object'`),
 ]);
 

@@ -3,7 +3,7 @@
 import { useRef, useState, useTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
-type Action = "scrub" | "submit" | "poll" | "done";
+type Action = "scrub" | "shadow" | "submit" | "poll" | "done";
 type Props = { action: Action; endpoint: string; label: string; disabledReason?: string; primary?: boolean };
 
 export function ActionForm({ action, endpoint, label, disabledReason, primary = false }: Props) {
@@ -27,6 +27,12 @@ export function ActionForm({ action, endpoint, label, disabledReason, primary = 
       }
       let text = "Task marked done.";
       if (action === "scrub") text = `${data.status}: ${data.totalUnits} units, ${data.blocks.length} blocks.`;
+      if (action === "shadow") {
+        const findings = Array.isArray(data.findings) ? data.findings : [];
+        const simulatedBlocks = findings.filter((finding: { outcome?: string }) => finding?.outcome === "BLOCK").length;
+        const pack = data.rulePack && typeof data.rulePack.id === "string" ? `${data.rulePack.id} v${data.rulePack.version}` : "candidate pack";
+        text = `Shadow ${pack}: ${simulatedBlocks} simulated blocks. Claim remains ${data.status}.`;
+      }
       if (action === "submit") text = `Submitted via fixture. ICN: ${data.icn}.`;
       if (action === "poll") {
         const results = data.results as { duplicate: boolean; matched: boolean; flags: unknown[] }[];

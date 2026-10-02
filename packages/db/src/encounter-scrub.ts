@@ -1,13 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, gte, inArray, lte, ne } from "drizzle-orm";
-import { allocateUnits, fixtureLineChargeCents, IdSchema, JsonObjectSchema, loadMedicareMinuteLadder, MoneyCentsSchema, type Claim } from "@pt-rcm/domain";
-import { applyDowngrades, defaultRulePack, ptPack, runRulesWithRepository, type ClaimDraft, type RuleContext } from "@pt-rcm/rules";
+import { allocateUnits, AuthorizationSchema, ClaimLineSchema, CoverageSchema, EncounterMinuteLineSchema, EncounterSchema,
+  fixtureLineChargeCents, IdSchema, JsonObjectSchema, loadMedicareMinuteLadder, MoneyCentsSchema, PayerSchema,
+  PlanOfCareSchema, type Claim } from "@pt-rcm/domain";
+import { applyDowngrades, runRulesWithRepository, type ClaimDraft, type RuleContext } from "@pt-rcm/rules";
 import type { Database } from "./index.js";
 import { createRuleFireRepository } from "./rule-fire-repository.js";
 import * as s from "./schema.js";
 import { encounterSourceFingerprint } from "./encounter-source.js";
 import { persistClaimTransition } from "./claim-lifecycle.js";
 import { openClaimTask } from "./tasks.js";
+import { currentRulePack } from "./rule-packs.js";
 
 export class EncounterScrubError extends Error {
   constructor(readonly status: 404 | 409 | 422, readonly code: string, message: string) {
@@ -105,7 +108,8 @@ export async function scrubEncounter(db: Database, organizationId: string, encou
       coverage, payer, authorizations, planOfCare, yearToDateBilledCents, mode: "active" };
     const current: Claim = reuse ? latest! : { id: claimId, encounterId, version, status: "DRAFT", payerId: payer.id, totalChargeCents: claimChargeCents, snapshotJson: {} };
     if (!reuse) await tx.insert(s.claims).values(current);
-    const run = await runRulesWithRepository(defaultRulePack, ctx, { claimId, repository: createRuleFireRepository(tx) });
+    const { row: ruleSet, pack } = await currentRulePack(tx, "ACTIVE");
+    const run = await runRulesWithRepository(pack.rules, ctx, { claimId, repository: createRuleFireRepository(tx, ruleSet.id) });
     const applied = applyDowngrades(draftClaim, run.downgrades);
     // A failed denial retry remains DENIED: there is no DENIED -> BLOCKED edge.
     // Repeated scrubs with the same result are no-ops, not self-transitions.
@@ -129,12 +133,59 @@ export async function scrubEncounter(db: Database, organizationId: string, encou
     const submissionHistory = [...(Array.isArray(history) ? history : []),
       ...(submission && next.status !== "DENIED" ? [{ version: latest!.version, submission }] : [])];
     await tx.update(s.claims).set({ totalChargeCents, snapshotJson: JsonObjectSchema.parse({
-      sourceFingerprint, claimLineIds, rulePack: { id: ptPack.id, version: ptPack.version, mode: "active" },
+      sourceFingerprint, claimLineIds, rulePack: { id: pack.id, version: pack.version, mode: "active" },
       encounter, minuteLines, diagnoses, coverage, payer, authorizations, planOfCare,
       yearToDateBilledCents, allocatedUnits, evaluatedDraft: draftClaim, draftClaim: applied,
       submissionHistory, ...(submission && next.status === "DENIED" ? { submission } : {}),
     }) }).where(eq(s.claims.id, claimId));
     return { encounterId, claimId, version: next.version, status: next.status, totalChargeCents,
       totalUnits: applied.lines.reduce((sum, line) => sum + line.units, 0), lines: applied.lines, ...run };
+  });
+}
+
+const savedDraftLine = ClaimLineSchema.pick({ cptCode: true, minutes: true, units: true,
+  modifiers: true, diagnosisPointers: true });
+
+/** Evaluate the candidate against the saved active scrub input, recording only audit rows. */
+export async function shadowScrubEncounter(db: Database, organizationId: string, encounterId: string) {
+  IdSchema.parse(organizationId); IdSchema.parse(encounterId);
+  return db.transaction(async (tx) => {
+    const [encounter] = await tx.select().from(s.encounters).where(and(
+      eq(s.encounters.id, encounterId), eq(s.encounters.organizationId, organizationId),
+    )).for("share");
+    if (!encounter) throw new EncounterScrubError(404, "ENCOUNTER_NOT_FOUND", "Encounter not found in this organization");
+    const [claim] = await tx.select().from(s.claims).where(eq(s.claims.encounterId, encounterId))
+      .orderBy(desc(s.claims.version)).limit(1).for("share");
+    if (!claim) throw new EncounterScrubError(409, "SHADOW_REQUIRES_CLAIM", "Scrub the encounter first to create a claim for shadow comparison");
+    const { row: ruleSet, pack } = await currentRulePack(tx, "SHADOW");
+    const saved = claim.snapshotJson;
+    let ctx: RuleContext;
+    let lines: ClaimDraft["lines"];
+    try {
+      const sourceEncounter = EncounterSchema.parse(saved.encounter);
+      if (sourceEncounter.id !== encounter.id || sourceEncounter.organizationId !== organizationId) throw new Error("Claim source mismatch");
+      const minuteLines = EncounterMinuteLineSchema.array().parse(saved.minuteLines);
+      const draft = saved.evaluatedDraft;
+      const applied = saved.draftClaim;
+      if (!draft || typeof draft !== "object" || Array.isArray(draft) || draft.encounterId !== encounterId || !Array.isArray(draft.lines)
+        || !applied || typeof applied !== "object" || Array.isArray(applied) || applied.encounterId !== encounterId || !Array.isArray(applied.lines)) {
+        throw new Error("Saved claim draft is unavailable");
+      }
+      const draftClaim: ClaimDraft = { encounterId, lines: draft.lines.map((line) => savedDraftLine.parse(line)) };
+      lines = applied.lines.map((line) => savedDraftLine.parse(line));
+      if (draftClaim.lines.length !== minuteLines.length || lines.length !== minuteLines.length) throw new Error("Saved line mapping is invalid");
+      const coverage = CoverageSchema.parse(saved.coverage);
+      const payer = PayerSchema.parse(saved.payer);
+      ctx = { encounter: sourceEncounter, minuteLines, allocatedUnits: allocateUnits(minuteLines, loadMedicareMinuteLadder()), draftClaim,
+        claimChargeCents: MoneyCentsSchema.parse(draftClaim.lines.reduce((sum, line) => sum + fixtureLineChargeCents(line.cptCode, line.units), 0)),
+        coverage, payer, authorizations: AuthorizationSchema.array().parse(saved.authorizations),
+        planOfCare: PlanOfCareSchema.nullable().parse(saved.planOfCare),
+        yearToDateBilledCents: MoneyCentsSchema.parse(saved.yearToDateBilledCents), mode: "shadow" };
+    } catch {
+      throw new EncounterScrubError(409, "SHADOW_SOURCE_INVALID", "Saved scrub input is unavailable for shadow comparison");
+    }
+    const run = await runRulesWithRepository(pack.rules, ctx, { claimId: claim.id, repository: createRuleFireRepository(tx, ruleSet.id) });
+    return { encounterId, claimId: claim.id, version: claim.version, status: claim.status, totalChargeCents: claim.totalChargeCents,
+      totalUnits: lines.reduce((sum, line) => sum + line.units, 0), lines, rulePack: { id: pack.id, version: pack.version, mode: "shadow" as const }, ...run };
   });
 }

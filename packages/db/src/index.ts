@@ -14,6 +14,7 @@ export * from "./remit-poll.js";
 export * from "./operator-read.js";
 export * from "./metrics-read.js";
 export * from "./rule-fire-repository.js";
+export * from "./rule-packs.js";
 
 // Importing the package does not open a connection or contact a clearinghouse.
 export function createDatabase(url: string) {

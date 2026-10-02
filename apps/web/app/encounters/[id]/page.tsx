@@ -16,12 +16,21 @@ export default async function EncounterPage({ params }: { params: Promise<{ id: 
   const result = await loadOperatorData((db, org) => getOperatorEncounter(db, org, parsed.data));
   if (!result.ok) return <DataUnavailable />;
   if (!result.data) notFound();
-  const { encounter, patient, provider, facility, minuteLines, diagnoses, latestClaim, claims, allocation, findings, document } = result.data;
+  const { encounter, patient, provider, facility, minuteLines, diagnoses, latestClaim, claims, allocation, findings, rulePacks, document } = result.data;
   const canScrub = !latestClaim || ["DRAFT", "BLOCKED", "SCRUBBED", "DENIED"].includes(latestClaim.status);
+  const ruleIds = [...new Set(findings.map((finding) => finding.ruleId))].sort();
+  const activeFindings = new Map(findings.filter((finding) => !finding.shadow).map((finding) => [finding.ruleId, finding]));
+  const shadowFindings = new Map(findings.filter((finding) => finding.shadow).map((finding) => [finding.ruleId, finding]));
+  const displayFinding = (finding: (typeof findings)[number] | undefined) => finding ? <>
+    <Badge value={finding.outcome} /> {typeof finding.detailJson.code === "string" ? <strong className="mono">{finding.detailJson.code}</strong> : null}
+    <span className="subtext">{String(finding.detailJson.message ?? finding.detailJson.description ?? "Passed")}</span>
+    <span className="subtext mono">Rule v{finding.ruleVersion} · {finding.createdAt.replace("T", " ").replace("Z", "")} UTC</span>
+  </> : <span className="muted">Not run</span>;
   return <>
     <p className="breadcrumb"><Link href="/">Encounters</Link> / <span>{encounter.externalId}</span></p>
     <div className="page-heading"><div><p className="eyebrow">Encounter</p><h1>{patient.firstName} {patient.lastName}</h1><p className="muted mono">{encounter.externalId}</p></div>
       <div className="actions"><ActionForm action="scrub" endpoint={`/api/encounters/${encounter.id}/scrub`} label="Scrub encounter" primary disabledReason={canScrub ? undefined : `Scrub unavailable while the claim is ${latestClaim!.status}.`} />
+        <ActionForm action="shadow" endpoint={`/api/encounters/${encounter.id}/scrub?mode=shadow`} label="Run shadow scrub" disabledReason={!latestClaim ? "Scrub the encounter first to create a claim." : rulePacks.hasShadow ? undefined : "No shadow pack is staged."} />
         {latestClaim ? <ActionForm action="submit" endpoint={`/api/claims/${latestClaim.id}/submit`} label="Submit claim (fixture)" disabledReason={fixtureDisabledReason() ?? (latestClaim.status === "SCRUBBED" ? undefined : "A SCRUBBED claim is required.")} /> : null}</div>
     </div>
     <dl className="facts"><div><dt>Date of service</dt><dd>{encounter.dateOfService}</dd></div><div><dt>Encounter status</dt><dd><Badge value={encounter.status} /></dd></div>
@@ -41,10 +50,10 @@ export default async function EncounterPage({ params }: { params: Promise<{ id: 
         {allocation.flags.map((flag) => <p className="inline-note" key={flag.lineIndex}><Badge value={flag.outcome} /> {flag.cptCode}: {flag.reason}</p>)}
       </section>
     </div>
-    <section className="panel"><div className="section-heading"><h2>Rule findings</h2><span className="muted">Latest recorded result per rule and mode</span></div>
-      {findings.length ? <TableFrame label="Rule findings"><table><thead><tr><th scope="col">Outcome</th><th scope="col">Rule / version</th><th scope="col">Finding</th><th scope="col">Mode</th><th scope="col">Recorded (UTC)</th></tr></thead>
-        <tbody>{findings.map((finding) => <tr key={finding.id}><td><Badge value={finding.outcome} /></td><td className="mono">{finding.ruleId}<span className="subtext">v{finding.ruleVersion}</span></td>
-          <td>{typeof finding.detailJson.code === "string" ? <strong className="mono">{finding.detailJson.code}</strong> : null}<span className="subtext">{String(finding.detailJson.message ?? finding.detailJson.description ?? "Passed")}</span></td><td>{finding.shadow ? "Shadow" : "Active"}</td><td className="nowrap mono">{finding.createdAt.replace("T", " ").replace("Z", "")}</td></tr>)}</tbody></table></TableFrame>
+    <section className="panel"><div className="section-heading"><h2>Rule comparison</h2><span className="muted">Latest active and shadow findings per rule. Shadow results do not change the claim.</span></div>
+      {ruleIds.length ? <TableFrame label="Active and shadow rule findings"><table><caption className="sr-only">Latest active and shadow rule results by rule ID</caption>
+        <thead><tr><th scope="col">Rule</th><th scope="col">Active finding{rulePacks.active ? <span className="subtext">{rulePacks.active}</span> : null}</th><th scope="col">Shadow finding (simulation){rulePacks.shadow ? <span className="subtext">{rulePacks.shadow}</span> : null}</th></tr></thead>
+        <tbody>{ruleIds.map((ruleId) => <tr key={ruleId}><th scope="row" className="mono">{ruleId}</th><td>{displayFinding(activeFindings.get(ruleId))}</td><td>{displayFinding(shadowFindings.get(ruleId))}</td></tr>)}</tbody></table></TableFrame>
         : <EmptyState>No findings yet. Use Scrub encounter to run the existing rule pack.</EmptyState>}
     </section>
     {claims.length > 1 ? <p className="version-links">Claim versions: {claims.map((claim) => <Link key={claim.id} href={`/claims/${claim.id}`}>v{claim.version} · {claim.status}</Link>)}</p> : null}

@@ -160,11 +160,13 @@ export type ClaimLine = z.infer<typeof ClaimLineSchema>;
 
 export const RuleSetSchema = z.object({
   id: IdSchema, version: NonEmptyString, status: RuleSetStatusSchema, notes: z.string(),
+  definitionJson: JsonObjectSchema.optional(),
 }).strict();
 export type RuleSet = z.infer<typeof RuleSetSchema>;
 
 export const RuleFireSchema = z.object({
   id: IdSchema, claimId: IdSchema, ruleId: NonEmptyString, ruleVersion: NonEmptyString,
+  ruleSetId: IdSchema.nullable().optional(),
   outcome: RuleOutcomeSchema, shadow: z.boolean(), detailJson: JsonObjectSchema,
   createdAt: UtcTimestampSchema,
 }).strict();

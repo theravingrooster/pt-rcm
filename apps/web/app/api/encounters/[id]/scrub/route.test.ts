@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { EncounterScrubError, scrubEncounter } from "@pt-rcm/db";
+import { EncounterScrubError, RulePackError, scrubEncounter, shadowScrubEncounter } from "@pt-rcm/db";
 import { IllegalClaimTransition } from "@pt-rcm/domain";
 import { POST } from "./route.js";
 
 vi.mock("@pt-rcm/db", async (importOriginal) => ({
-  ...await importOriginal<typeof import("@pt-rcm/db")>(), createDatabase: vi.fn(() => ({ db: {} })), scrubEncounter: vi.fn(),
+  ...await importOriginal<typeof import("@pt-rcm/db")>(), createDatabase: vi.fn(() => ({ db: {} })), scrubEncounter: vi.fn(), shadowScrubEncounter: vi.fn(),
 }));
 const id = "00000000-0000-4000-8000-000000000101";
 const request = new Request(`http://localhost/api/encounters/${id}/scrub`, { method: "POST" });
@@ -27,6 +27,20 @@ describe("POST /api/encounters/:id/scrub", () => {
     await POST(request, { params });
     expect(scrubEncounter).toHaveBeenCalledWith({}, id, id);
   });
+  it("runs only the shadow service for mode=shadow", async () => {
+    const expected = { ...result, rulePack: { id: "outpatient-pt", version: 2, mode: "shadow" as const } };
+    vi.mocked(shadowScrubEncounter).mockResolvedValue(expected);
+    const response = await POST(new Request(`${request.url}?mode=shadow`, { method: "POST" }), { params });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(expected);
+    expect(scrubEncounter).not.toHaveBeenCalled();
+    expect(shadowScrubEncounter).toHaveBeenCalledWith({}, expect.any(String), id);
+  });
+  it("rejects unknown modes without running a scrub", async () => {
+    expect((await POST(new Request(`${request.url}?mode=test`, { method: "POST" }), { params })).status).toBe(400);
+    expect(shadowScrubEncounter).not.toHaveBeenCalled();
+    expect(scrubEncounter).not.toHaveBeenCalled();
+  });
   it("rejects a malformed ID before persistence", async () => {
     expect((await POST(request, { params: Promise.resolve({ id: "bad-id" }) })).status).toBe(400);
     expect(scrubEncounter).not.toHaveBeenCalled();
@@ -36,6 +50,12 @@ describe("POST /api/encounters/:id/scrub", () => {
     const response = await POST(request, { params });
     expect(response.status).toBe(status);
     expect(await response.json()).toEqual({ error: "SYN-ERROR", message: "Synthetic failure" });
+  });
+  it("maps unavailable pack errors", async () => {
+    vi.mocked(shadowScrubEncounter).mockRejectedValue(new RulePackError(409, "RULE_PACK_MISSING", "No shadow pack"));
+    const response = await POST(new Request(`${request.url}?mode=shadow`, { method: "POST" }), { params });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "RULE_PACK_MISSING" });
   });
   it("keeps internal failure details out of the response", async () => {
     vi.mocked(scrubEncounter).mockRejectedValue(new Error("SYN private details"));

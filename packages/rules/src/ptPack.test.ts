@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { allocateUnits, fixtureLineChargeCents, getCptFixture, loadMedicareMinuteLadder } from "@pt-rcm/domain";
 import { applyDowngrades, runRules, toRuleFireRows } from "./index.js";
-import { authVisitsRule, distinctProcedureRule, eightMinuteAppliedRule, evalWithTreatmentRule, gpModifierRule, kxThresholdRule, planOfCareRule, ptPack, zeroMinuteTimedRule } from "./ptPack.js";
+import { authVisitsRule, distinctProcedureRule, eightMinuteAppliedRule, evalWithTreatmentRule, gpModifierRule, kxThresholdRule, planOfCareRule, ptPack, timedCodeCapRule, zeroMinuteTimedRule } from "./ptPack.js";
 import { makeContext, testClaimId } from "./testing/fixtures.js";
 import type { RuleContext } from "./types.js";
 
@@ -167,6 +167,29 @@ describe("distinct-procedure", () => {
   });
   it("still flags an unmarked pair among three codes", () => {
     expect(distinctProcedureRule.evaluate(context([{ cptCode: "97110", minutes: 15, modifiers: ["59"] }, { cptCode: "97140", minutes: 15 }, { cptCode: "97530", minutes: 15 }]))).toMatchObject({ outcome: "FLAG", code: "MISSING_59" });
+  });
+});
+
+describe("timed-code-cap", () => {
+  it.each([
+    { lines: [{ cptCode: "97110", minutes: 53, units: 4 }], outcome: "PASS" },
+    { lines: [{ cptCode: "97110", minutes: 68, units: 5 }], outcome: "FLAG" },
+    { lines: [{ cptCode: "97110", minutes: 38, units: 3 }, { cptCode: "97110", minutes: 23, units: 2 }], outcome: "FLAG" },
+    { lines: [{ cptCode: "97110", minutes: 38, units: 3 }, { cptCode: "97530", minutes: 23, units: 2 }], outcome: "PASS" },
+    { lines: [{ cptCode: "97161", minutes: 0, units: 5 }], outcome: "PASS" },
+  ])("$lines => $outcome", ({ lines, outcome }) => {
+    const ctx = context(lines);
+    const before = structuredClone(ctx);
+    expect(timedCodeCapRule.evaluate(ctx)).toMatchObject(outcome === "FLAG"
+      ? { outcome, code: "TIMED_CODE_CAP", detail: { cptCodes: ["97110"], capUnits: 4 } }
+      : { outcome });
+    expect(ctx).toEqual(before);
+  });
+
+  it("does not treat a mismatched draft code as a recorded timed service", () => {
+    const ctx = context([{ cptCode: "97161", minutes: 0, units: 5 }]);
+    const draftClaim = { ...ctx.draftClaim, lines: [{ ...ctx.draftClaim.lines[0]!, cptCode: "97110" }] };
+    expect(timedCodeCapRule.evaluate({ ...ctx, draftClaim })).toEqual({ outcome: "PASS" });
   });
 });
 

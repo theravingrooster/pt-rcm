@@ -80,9 +80,17 @@ export async function getOperatorEncounter(db: Database, organizationId: string,
       tx.select().from(s.claims).where(eq(s.claims.encounterId, encounterId)).orderBy(desc(s.claims.version)),
     ]);
     const latest = claims[0];
-    const [findings, document] = await Promise.all([latestFindings(tx, latest ? [latest.id] : []), documentPreview(tx, organizationId, latest)]);
+    const [findings, document, packs] = await Promise.all([
+      latestFindings(tx, latest ? [latest.id] : []), documentPreview(tx, organizationId, latest), tx.select().from(s.ruleSets),
+    ]);
+    const label = (shadow: boolean) => {
+      const finding = findings.find((entry) => entry.shadow === shadow && entry.ruleSetId);
+      const pack = packs.find((entry) => entry.id === finding?.ruleSetId) ?? packs.find((entry) => entry.status === (shadow ? "SHADOW" : "ACTIVE"));
+      return pack ? `${typeof pack.definitionJson.id === "string" ? pack.definitionJson.id : "Rule pack"} v${pack.version}` : null;
+    };
     return { ...row, minuteLines, diagnoses, claims, latestClaim: latest ?? null,
-      allocation: allocateUnits(minuteLines, loadMedicareMinuteLadder()), findings, document };
+      allocation: allocateUnits(minuteLines, loadMedicareMinuteLadder()), findings,
+      rulePacks: { active: label(false), shadow: label(true), hasShadow: packs.some((pack) => pack.status === "SHADOW") }, document };
   }, readOnly);
 }
 

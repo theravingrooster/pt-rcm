@@ -110,6 +110,23 @@ export const distinctProcedureRule: Rule = Object.freeze<Rule>({
   },
 });
 
+export const timedCodeCapRule: Rule = Object.freeze<Rule>({
+  id: "timed-code-cap", version: 1, description: "Flag more than four billed units for one timed CPT code.",
+  evaluate(ctx): RuleResult {
+    const unitsByCode = new Map<string, number>();
+    ctx.draftClaim.lines.forEach((line, index) => {
+      const recorded = ctx.minuteLines[index];
+      if (!recorded?.timed || recorded.cptCode !== line.cptCode) return;
+      unitsByCode.set(line.cptCode, (unitsByCode.get(line.cptCode) ?? 0) + line.units);
+    });
+    const cappedCodes = [...unitsByCode].filter(([, units]) => units > 4).map(([code]) => code).sort();
+    return cappedCodes.length
+      ? { outcome: "FLAG", code: "TIMED_CODE_CAP", message: "A timed code has more than four billed units; review the recorded services.",
+        detail: { cptCodes: cappedCodes, capUnits: 4 } }
+      : { outcome: "PASS" };
+  },
+});
+
 export const ptPack = Object.freeze({
   id: "outpatient-pt", version: 1, mode: "active" as const,
   rules: Object.freeze([gpModifierRule, eightMinuteAppliedRule, zeroMinuteTimedRule, kxThresholdRule,
