@@ -86,6 +86,25 @@ describe("Medicare fixture reference data", () => {
     expect(() => minutesToUnits(minutes)).toThrow(RangeError);
   });
 
+  it("reuses an explicit Medicare ladder and extrapolates past its last bracket", () => {
+    const shortLadder = loadMedicareMinuteLadder().slice(0, 2);
+    expect(minutesToUnits(8, shortLadder)).toBe(1);
+    expect(minutesToUnits(83, shortLadder)).toBe(6);
+    const extendedLadder = [...loadMedicareMinuteLadder(), { minMinutes: 83, maxMinutes: 97, units: 6 }];
+    expect(minutesToUnits(97, extendedLadder)).toBe(6);
+    expect(minutesToUnits(98, extendedLadder)).toBe(7);
+  });
+
+  it.each([
+    [],
+    [{ minMinutes: 0, maxMinutes: 7, units: 0 }],
+    [{ minMinutes: 0, maxMinutes: 7, units: 0 }, { minMinutes: 9, maxMinutes: 22, units: 1 }],
+    [{ minMinutes: 0, maxMinutes: 7, units: 0 }, { minMinutes: 8, maxMinutes: 23, units: 1 }],
+    [{ minMinutes: 0, maxMinutes: 7, units: 0 }, { minMinutes: 8, maxMinutes: 22, units: 2 }],
+  ].map((ladder) => ({ ladder })))("rejects an incomplete or malformed supplied ladder %#", ({ ladder }) => {
+    expect(() => minutesToUnits(0, ladder)).toThrow(RangeError);
+  });
+
   it("stores the requested 2026 combined PT/SLP KX threshold in integer cents", () => {
     expect(MEDICARE_PT_SLP_KX_THRESHOLD_2026_CENTS).toBe(248000);
     expect(Number.isInteger(MEDICARE_PT_SLP_KX_THRESHOLD_2026_CENTS)).toBe(true);
