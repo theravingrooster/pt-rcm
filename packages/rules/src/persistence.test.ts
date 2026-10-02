@@ -69,6 +69,19 @@ describe("optional RuleFire persistence", () => {
     expect(() => toRuleFireRows("not-a-uuid", runRules([], makeContext()))).toThrow();
   });
 
+  it("detaches nested modifier patches and detail arrays", () => {
+    const rule: Rule = { id: "SYN_GP", version: 1, description: "Synthetic GP patch", evaluate: () => ({
+      outcome: "DOWNGRADE", code: "MISSING_GP", message: "Synthetic GP", detail: { indexes: [0] }, linePatches: [{ lineIndex: 0, addModifiers: ["GP"] }],
+    }) };
+    const run = runRules([rule], makeContext());
+    const before = structuredClone(run);
+    const rows = toRuleFireRows(testClaimId, run);
+    const patches = rows[0]!.detailJson.linePatches as { addModifiers: string[] }[];
+    patches[0]!.addModifiers.push("SYN-MUTATED");
+    (rows[0]!.detailJson.indexes as number[]).push(1);
+    expect(run).toEqual(before);
+  });
+
   it("produces detached, deterministic persistence rows without mutating the run", () => {
     const run = runRules(rules, makeContext());
     const before = structuredClone(run);

@@ -13,6 +13,8 @@ function freezeDeep<T>(value: T): T {
 export function runRules(rules: readonly Rule[], ctx: RuleContext): RuleRun {
   if (ctx.mode !== "active" && ctx.mode !== "shadow") throw new TypeError("Invalid rule mode");
   MoneyCentsSchema.parse(ctx.yearToDateBilledCents);
+  MoneyCentsSchema.parse(ctx.claimChargeCents);
+  if (ctx.draftClaim.encounterId !== ctx.encounter.id) throw new TypeError("Draft belongs to a different encounter");
   // Never freeze the caller's objects. A misbehaving rule must not change the
   // inputs seen by later rules or mutate the caller's encounter through ctx.
   const context = freezeDeep(structuredClone(ctx));
@@ -27,7 +29,10 @@ export function runRules(rules: readonly Rule[], ctx: RuleContext): RuleRun {
       if (result.outcome === "DOWNGRADE") {
         for (const patch of result.linePatches) {
           const line = context.allocatedUnits.lines[patch.lineIndex];
-          if (!line || patch.units > line.units) throw new RangeError("A downgrade must target an existing line and cannot increase units");
+          const draftLine = context.draftClaim.lines[patch.lineIndex];
+          if (!line || !draftLine || (patch.units !== undefined && patch.units > Math.min(line.units, draftLine.units))) {
+            throw new RangeError("A downgrade must target an existing line and cannot increase units");
+          }
         }
       }
     } catch {

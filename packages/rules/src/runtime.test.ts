@@ -132,11 +132,14 @@ describe("runRules", () => {
     expect(runRules([{ ...ALWAYS_FLAG, version: 0 }], makeContext()).blocks[0]).toMatchObject({ code: "RULE_CRASH", ruleId: "ALWAYS_FLAG" });
   });
 
-  it("ships an empty default pack and keeps ALWAYS_FLAG test-only", () => {
-    expect(api.defaultRulePack).toEqual([]);
+  it("registers PT version 1 while keeping ALWAYS_FLAG test-only", () => {
+    expect(api.defaultRulePack).toHaveLength(8);
+    expect(api.defaultRulePackVersion).toBe(1);
+    expect(api.defaultRulePackMode).toBe("active");
+    expect(api.defaultRulePack.some((rule) => rule.id === "ALWAYS_FLAG")).toBe(false);
     expect(Object.isFrozen(api.defaultRulePack)).toBe(true);
     expect(api).not.toHaveProperty("ALWAYS_FLAG");
-    expect(runRules(api.defaultRulePack, makeContext())).toEqual({ findings: [], blocks: [], downgrades: [], submissionAllowed: true });
+    expect(runRules([], makeContext())).toEqual({ findings: [], blocks: [], downgrades: [], submissionAllowed: true });
     expect(runRules([ALWAYS_FLAG], makeContext()).findings[0]).toMatchObject({ ruleId: "ALWAYS_FLAG", outcome: "FLAG", code: "ALWAYS_FLAG" });
   });
 });

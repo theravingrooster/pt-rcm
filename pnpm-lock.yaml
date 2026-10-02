@@ -59,6 +59,9 @@ importers:
       '@pt-rcm/domain':
         specifier: workspace:*
         version: link:../domain
+      '@pt-rcm/rules':
+        specifier: workspace:*
+        version: link:../rules
       drizzle-orm:
         specifier: ^0.36.4
         version: 0.36.4(@types/react@19.3.0)(postgres@3.4.9)(react@19.3.0)

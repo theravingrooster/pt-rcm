@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  NonNegativeIntSchema,
+  JsonObjectSchema, NonNegativeIntSchema,
   type Authorization, type ClaimLine, type Coverage, type Encounter,
   type EncounterMinuteLine, type Payer, type PlanOfCare, type UnitAllocation,
 } from "@pt-rcm/domain";
@@ -11,6 +11,8 @@ export type RuleContext = DeepReadonly<{
   encounter: Encounter;
   minuteLines: EncounterMinuteLine[];
   allocatedUnits: UnitAllocation;
+  draftClaim: ClaimDraft;
+  claimChargeCents: number;
   coverage: Coverage | null;
   payer: Payer;
   authorizations: Authorization[];
@@ -21,14 +23,16 @@ export type RuleContext = DeepReadonly<{
 }>;
 
 // Indexes refer to the stable allocation/draft line order, including zero-unit lines.
-// Strict validation forbids adding minutes, codes, diagnoses, or other services.
+// GP is the only automatic modifier addition supported by this version.
+// Strict validation still forbids adding minutes, codes, diagnoses, or services.
 export const LinePatchSchema = z.object({
   lineIndex: NonNegativeIntSchema,
-  units: NonNegativeIntSchema,
-}).strict();
+  units: NonNegativeIntSchema.optional(),
+  addModifiers: z.array(z.literal("GP")).min(1).optional(),
+}).strict().refine((patch) => patch.units !== undefined || patch.addModifiers !== undefined, "Patch must change units or add GP");
 export type LinePatch = z.infer<typeof LinePatchSchema>;
 
-const explanation = { code: z.string().trim().min(1), message: z.string().trim().min(1) };
+const explanation = { code: z.string().trim().min(1), message: z.string().trim().min(1), detail: JsonObjectSchema.optional() };
 export const RuleResultSchema = z.discriminatedUnion("outcome", [
   z.object({ outcome: z.literal("PASS") }).strict(),
   z.object({ outcome: z.literal("FLAG"), ...explanation }).strict(),

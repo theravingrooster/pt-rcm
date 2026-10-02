@@ -1,4 +1,5 @@
-import type { Rule } from "./types.js";
+import { ptPack } from "./ptPack.js";
 
-// Runtime infrastructure only. PT policy rules have not been implemented.
-export const defaultRulePack: readonly Rule[] = Object.freeze([]);
+export const defaultRulePack = ptPack.rules;
+export const defaultRulePackVersion = ptPack.version;
+export const defaultRulePackMode = ptPack.mode;

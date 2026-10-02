@@ -16,9 +16,10 @@ export function toRuleFireRows(claimId: string, run: RuleRun): RuleFireInsert[] 
     claimId, ruleId: finding.ruleId, ruleVersion: String(finding.ruleVersion),
     outcome: finding.outcome, shadow: finding.shadow,
     detailJson: {
+      ...(finding.outcome === "PASS" ? {} : structuredClone(finding.detail ?? {})),
       encounterId: finding.encounterId, description: finding.description,
       ...(finding.outcome === "PASS" ? {} : { code: finding.code, message: finding.message }),
-      ...(finding.outcome === "DOWNGRADE" ? { linePatches: finding.linePatches.map((patch) => ({ ...patch })) } : {}),
+      ...(finding.outcome === "DOWNGRADE" ? { linePatches: structuredClone(finding.linePatches) } : {}),
     },
   }));
 }

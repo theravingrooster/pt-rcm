@@ -33,7 +33,7 @@ jobs:
       - run: pnpm test
       - name: Build the Next.js app
         run: pnpm --filter @pt-rcm/web build
-      - name: Ingest the synthetic demo through HTTP twice
+      - name: Ingest the synthetic demo twice and scrub through HTTP
         run: |
           pnpm --filter @pt-rcm/web exec next start > /tmp/pt-rcm-web.log 2>&1 &
           web_pid=$!
@@ -45,6 +45,25 @@ jobs:
           curl --fail --silent http://localhost:3000/api/health
           pnpm seed:demo
           pnpm seed:demo
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFile } from 'node:fs/promises';
+          const body = JSON.parse(await readFile('fixtures/encounters/shoulder-23min.json', 'utf8'));
+          body.minuteLines = [{ cptCode: '97110', minutes: 20 }, { cptCode: '97530', minutes: 20 }];
+          const ingested = await fetch('http://localhost:3000/api/encounters', {
+            method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+          });
+          assert.equal(ingested.status, 200);
+          const { encounterId } = await ingested.json();
+          const response = await fetch(`http://localhost:3000/api/encounters/${encounterId}/scrub`, { method: 'POST' });
+          assert.equal(response.status, 200);
+          const scrubbed = await response.json();
+          assert.equal(scrubbed.status, 'SCRUBBED');
+          assert.equal(scrubbed.totalUnits, 3);
+          assert.equal(scrubbed.totalChargeCents, 13500);
+          assert.ok(scrubbed.lines.every(line => line.modifiers.includes('GP')));
+          assert.equal(scrubbed.findings.length, 8);
+          JS
       - name: Check migration drift
         run: |
           pnpm db:generate

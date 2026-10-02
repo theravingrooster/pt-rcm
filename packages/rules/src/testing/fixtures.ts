@@ -15,8 +15,11 @@ export function makeContext(mode: RuleContext["mode"] = "active"): RuleContext {
     { id: id("6"), encounterId: encounter.id, cptCode: "97110", minutes: 20, timed: true, notes: null },
     { id: id("7"), encounterId: encounter.id, cptCode: "97530", minutes: 20, timed: true, notes: null },
   ];
+  const allocatedUnits = allocateUnits(minuteLines, loadMedicareMinuteLadder());
   return {
-    encounter, minuteLines, allocatedUnits: allocateUnits(minuteLines, loadMedicareMinuteLadder()),
+    encounter, minuteLines, allocatedUnits,
+    draftClaim: { encounterId: encounter.id, lines: allocatedUnits.lines.map(({ cptCode, minutes, units }) => ({ cptCode, minutes, units, modifiers: [], diagnosisPointers: [0] })) },
+    claimChargeCents: 13500,
     coverage: {
       id: id("8"), patientId: encounter.patientId, payerId: id("9"), memberId: "SYN-RULES-MEMBER",
       groupNumber: null, planName: null, subscriberRelationship: "SELF", active: true,
