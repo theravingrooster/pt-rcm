@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildClaimDocument } from "@pt-rcm/domain";
+import { buildClaimDocument, RemitEnvelopeSchema } from "@pt-rcm/domain";
 import { makeClaimDocumentInput } from "../../domain/src/testing/claimDocument.js";
 import { ClearinghouseDisabled, FixtureClearinghouse, StediClearinghouse, type ClearinghousePort } from "./index.js";
 
@@ -31,6 +31,7 @@ describe("fixture clearinghouse", () => {
     script.totalChargeCents = 99;
     const remits = await fixture.fetchRemits("2026-10-01");
     expect(remits).toEqual([{
+      id: expect.any(String), lines: [],
       claimId: script.claimId, payerIcn: `SYN-ICN-${script.claimId}`, paidCents, patientResponsibilityCents,
       carc: "PR-2", adjustments: [{ carc: "PR-2", amountCents: patientResponsibilityCents }], receivedOn: "2026-10-02",
     }]);
@@ -51,6 +52,34 @@ describe("fixture clearinghouse", () => {
   });
   it.each([-1, 1.5, NaN])("rejects invalid scripted cents %s", (totalChargeCents) => {
     expect(() => new FixtureClearinghouse({ claimId: document().claimId, totalChargeCents, receivedOn: "2026-10-02" })).toThrow();
+  });
+  it("scripts service lines, stable IDs, and detached batches without submitting", async () => {
+    const doc = document();
+    const script = { claimId: doc.claimId, claimVersion: 1, totalChargeCents: doc.totalChargeCents, receivedOn: "2026-10-02",
+      lines: doc.lines.map(({ cptCode, units, chargeCents }) => ({ cptCode, units, chargeCents })) };
+    const fixture = new FixtureClearinghouse([script]);
+    const [remit] = await fixture.fetchRemits("2026-10-01");
+    expect(RemitEnvelopeSchema.parse(remit)).toEqual(remit);
+    expect(remit!.lines.map((line) => [line.cptCode, line.units, line.paidCents, line.patientResponsibilityCents])).toEqual([
+      ["97110", 2, 7200, 1800], ["97530", 1, 3600, 900],
+    ]);
+    expect((await new FixtureClearinghouse(script).fetchRemits("2026-10-01"))[0]!.id).toBe(remit!.id);
+    expect((await new FixtureClearinghouse({ ...script, claimVersion: 2 }).fetchRemits("2026-10-01"))[0]!.id).not.toBe(remit!.id);
+    script.lines[0]!.units = 99;
+    remit!.lines[0]!.paidCents = 0;
+    expect((await fixture.fetchRemits("2026-10-01"))[0]!.lines[0]).toMatchObject({ units: 2, paidCents: 7200 });
+    expect(fixture.calls.every((call) => call.method === "fetchRemits")).toBe(true);
+  });
+  it("keeps odd-cent service-line totals equal to the scripted claim total", async () => {
+    const [remit] = await new FixtureClearinghouse({ claimId: document().claimId, totalChargeCents: 3, receivedOn: "2026-10-02",
+      lines: [{ cptCode: "97110", units: 1, chargeCents: 1 }, { cptCode: "97530", units: 1, chargeCents: 2 }] }).fetchRemits("2026-10-01");
+    expect(remit!.paidCents).toBe(2);
+    expect(remit!.lines.reduce((sum, line) => sum + line.paidCents, 0)).toBe(2);
+    expect(remit!.lines.reduce((sum, line) => sum + line.patientResponsibilityCents!, 0)).toBe(1);
+  });
+  it("rejects contradictory script charges", () => {
+    expect(() => new FixtureClearinghouse({ claimId: document().claimId, totalChargeCents: 3, receivedOn: "2026-10-02",
+      lines: [{ cptCode: "97110", units: 1, chargeCents: 1 }] })).toThrow("Fixture line charges must equal the claim charge");
   });
 });
 

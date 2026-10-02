@@ -246,9 +246,13 @@ export const remits = pgTable("remits", {
   paidCents: integer("paid_cents").notNull(),
   patientResponsibilityCents: integer("patient_responsibility_cents").notNull(),
   receivedOn: date("received_on", { mode: "string" }).notNull(),
+  adjustmentCents: integer("adjustment_cents").notNull().default(0),
+  detailJson: jsonb("detail_json").$type<JsonObject>().notNull().default({}),
 }, (t) => [
   index("remits_claim_idx").on(t.claimId),
   check("remits_amounts", sql`${t.paidCents} >= 0 AND ${t.patientResponsibilityCents} >= 0`),
+  check("remits_adjustments", sql`${t.adjustmentCents} >= 0`),
+  check("remits_detail_object", sql`jsonb_typeof(${t.detailJson}) = 'object'`),
 ]);
 
 export const remitLines = pgTable("remit_lines", {
@@ -256,12 +260,18 @@ export const remitLines = pgTable("remit_lines", {
   remitId: uuid("remit_id").notNull().references(() => remits.id),
   claimLineId: uuid("claim_line_id").notNull().references(() => claimLines.id),
   paidCents: integer("paid_cents").notNull(),
-  carc: text("carc").notNull(),
+  carc: text("carc"),
   rarc: text("rarc"),
+  patientResponsibilityCents: integer("patient_responsibility_cents").notNull().default(0),
+  adjustmentCents: integer("adjustment_cents").notNull().default(0),
+  contractualWriteOffCents: integer("contractual_write_off_cents").notNull().default(0),
+  detailJson: jsonb("detail_json").$type<JsonObject>().notNull().default({}),
 }, (t) => [
   index("remit_lines_remit_idx").on(t.remitId),
   index("remit_lines_claim_line_idx").on(t.claimLineId),
   check("remit_lines_paid", sql`${t.paidCents} >= 0`),
+  check("remit_lines_adjustments", sql`${t.patientResponsibilityCents} >= 0 AND ${t.adjustmentCents} >= 0 AND ${t.contractualWriteOffCents} >= 0 AND ${t.contractualWriteOffCents} <= ${t.adjustmentCents}`),
+  check("remit_lines_detail_object", sql`jsonb_typeof(${t.detailJson}) = 'object'`),
 ]);
 
 export const tasks = pgTable("tasks", {

@@ -174,12 +174,17 @@ export const RemitSchema = z.object({
   id: IdSchema, claimId: IdSchema, payerIcn: NonEmptyString,
   paidCents: MoneyCentsSchema, patientResponsibilityCents: MoneyCentsSchema,
   receivedOn: IsoDateSchema,
+  adjustmentCents: MoneyCentsSchema.default(0),
+  // Raw envelope and posting result retain unmatched amounts and balance flags.
+  detailJson: JsonObjectSchema.default({}),
 }).strict();
 export type Remit = z.infer<typeof RemitSchema>;
 
 export const RemitLineSchema = z.object({
   id: IdSchema, remitId: IdSchema, claimLineId: IdSchema,
-  paidCents: MoneyCentsSchema, carc: NonEmptyString, rarc: NonEmptyString.nullable(),
+  paidCents: MoneyCentsSchema, carc: NonEmptyString.nullable(), rarc: NonEmptyString.nullable(),
+  patientResponsibilityCents: MoneyCentsSchema.default(0), adjustmentCents: MoneyCentsSchema.default(0),
+  contractualWriteOffCents: MoneyCentsSchema.default(0), detailJson: JsonObjectSchema.default({}),
 }).strict();
 export type RemitLine = z.infer<typeof RemitLineSchema>;
 

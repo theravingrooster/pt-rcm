@@ -9,6 +9,8 @@ export * from "./claim-document.js";
 export * from "./claim-submit.js";
 export { ClaimLifecycleError, transitionStoredClaim } from "./claim-lifecycle.js";
 export { TaskNotFound, listTasks, completeTask } from "./tasks.js";
+export * from "./remit-post.js";
+export * from "./remit-poll.js";
 export * from "./rule-fire-repository.js";
 
 // Importing the package does not open a connection or contact a clearinghouse.

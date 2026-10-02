@@ -4,7 +4,7 @@ import type { Database } from "./index.js";
 import * as s from "./schema.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
-export type ClaimTaskKind = "RULE_BLOCK" | "DENIAL_REVIEW" | "PATIENT_INVOICE";
+export type ClaimTaskKind = "RULE_BLOCK" | "DENIAL_REVIEW" | "PATIENT_INVOICE" | "REMIT_UNMATCHED" | "REMIT_OUT_OF_BALANCE";
 
 export class TaskNotFound extends Error {
   readonly code = "TASK_NOT_FOUND";
@@ -14,7 +14,7 @@ export class TaskNotFound extends Error {
 
 /** The claim lock serializes open/close, so repeated or concurrent findings
  * create at most one open task of each kind. Call inside the claim transaction.
- * All three are operator work: PATIENT_INVOICE requests invoice preparation.
+ * These are operator work: PATIENT_INVOICE requests invoice preparation.
  */
 export async function openClaimTask(tx: Transaction, claimId: string, kind: ClaimTaskKind, reason: string) {
   await tx.select({ id: s.claims.id }).from(s.claims).where(eq(s.claims.id, claimId)).for("update");

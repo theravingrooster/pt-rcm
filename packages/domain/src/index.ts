@@ -4,6 +4,7 @@ export * from "./encounter-ingest.js";
 export * from "./eightMinute.js";
 export * from "./claimDocument.js";
 export * from "./lifecycle.js";
+export * from "./remit.js";
 
 export const prototype = "pt-rcm";
 
