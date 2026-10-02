@@ -132,6 +132,18 @@ describe.skipIf(!url)("PostgreSQL persistence", () => {
     });
   });
 
+  it("persists the requested Medicare HCPCS fixture in existing procedure-code fields", async () => {
+    await rollbackFixture(async (tx) => {
+      const [minuteLine] = await tx.insert(s.encounterMinuteLines).values({
+        encounterId, cptCode: "G0283", minutes: 0, timed: false, notes: null,
+      }).returning();
+      expect(d.EncounterMinuteLineSchema.parse(minuteLine).cptCode).toBe("G0283");
+      const [claimLine] = await tx.update(s.claimLines).set({ cptCode: "G0283", minutes: 0 })
+        .where(eq(s.claimLines.id, claimLineId)).returning();
+      expect(d.ClaimLineSchema.parse(claimLine).cptCode).toBe("G0283");
+    });
+  });
+
   it.each([
     ["non-synthetic organization NPI", sql`UPDATE organizations SET billing_npi = '1234567890' WHERE id = ${organizationId}`, "23514"],
     ["non-synthetic tax ID", sql`UPDATE organizations SET tax_id = '12-3456789' WHERE id = ${organizationId}`, "23514"],

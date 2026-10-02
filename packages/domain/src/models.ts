@@ -47,7 +47,8 @@ export const NonNegativeIntSchema = z.number().int().min(0).max(2_147_483_647);
 export const MoneyCentsSchema = NonNegativeIntSchema;
 const PositiveIntSchema = NonNegativeIntSchema.min(1);
 // Format validation only; this is not a licensed code catalog or a billing rule.
-export const CptCodeSchema = z.string().regex(/^\d{4}[0-9A-Z]$/);
+// The existing cptCode fields also carry HCPCS Level II codes such as G0283.
+export const CptCodeSchema = z.string().regex(/^(?:\d{4}[0-9A-Z]|[A-Z]\d{4})$/);
 export const Icd10Schema = z.string().regex(/^[A-Z][0-9][A-Z0-9](?:\.[A-Z0-9]{1,4})?$/);
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };

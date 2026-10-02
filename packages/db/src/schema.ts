@@ -138,7 +138,7 @@ export const encounterMinuteLines = pgTable("encounter_minute_lines", {
 }, (t) => [
   index("encounter_minute_lines_encounter_idx").on(t.encounterId),
   check("encounter_minute_lines_minutes", sql`${t.minutes} >= 0`),
-  check("encounter_minute_lines_cpt", sql`${t.cptCode} ~ '^[0-9]{4}[0-9A-Z]$'`),
+  check("encounter_minute_lines_cpt", sql`${t.cptCode} ~ '^([0-9]{4}[0-9A-Z]|[A-Z][0-9]{4})$'`),
 ]);
 
 export const diagnoses = pgTable("diagnoses", {
@@ -209,7 +209,7 @@ export const claimLines = pgTable("claim_lines", {
   minutes: integer("minutes").notNull(),
 }, (t) => [
   index("claim_lines_claim_idx").on(t.claimId),
-  check("claim_lines_cpt", sql`${t.cptCode} ~ '^[0-9]{4}[0-9A-Z]$'`),
+  check("claim_lines_cpt", sql`${t.cptCode} ~ '^([0-9]{4}[0-9A-Z]|[A-Z][0-9]{4})$'`),
   check("claim_lines_amounts", sql`${t.units} >= 1 AND ${t.chargeCents} >= 0 AND ${t.minutes} >= 0`),
   check("claim_lines_pointers", sql`(cardinality(${t.diagnosisPointers}) = 0 OR array_ndims(${t.diagnosisPointers}) = 1) AND array_position(${t.diagnosisPointers}, NULL) IS NULL AND 0 <= ALL(${t.diagnosisPointers})`),
   check("claim_lines_modifiers", sql`(cardinality(${t.modifiers}) = 0 OR (array_ndims(${t.modifiers}) = 1 AND array_to_string(${t.modifiers}, ',') ~ '^[A-Z0-9]{2}(,[A-Z0-9]{2})*$')) AND array_position(${t.modifiers}, NULL) IS NULL`),

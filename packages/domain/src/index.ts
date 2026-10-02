@@ -1,4 +1,5 @@
 export * from "./models.js";
+export * from "./fixtures/index.js";
 
 export const prototype = "pt-rcm";
 
