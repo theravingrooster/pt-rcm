@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import * as d from "@pt-rcm/domain";
-import { createDatabase, type Database } from "./index.js";
+import { createDatabase, createRuleFireRepository, type Database } from "./index.js";
 import * as s from "./schema.js";
 import { seedSyntheticData } from "./seed-database.js";
 import { seedFacility, seedOrganization, seedPayers, seedProviders } from "./seed-data.js";
@@ -142,6 +142,33 @@ describe.skipIf(!url)("PostgreSQL persistence", () => {
         .where(eq(s.claimLines.id, claimLineId)).returning();
       expect(d.ClaimLineSchema.parse(claimLine).cptCode).toBe("G0283");
     });
+  });
+
+  it("persists RuleFire batches through the repository using database IDs and UTC timestamps", async () => {
+    await rollbackFixture(async (tx) => {
+      const repository = createRuleFireRepository(tx);
+      await repository.insertRuleFires([]);
+      expect(await tx.select().from(s.ruleFires).where(eq(s.ruleFires.claimId, claimId))).toEqual([]);
+      await repository.insertRuleFires([
+        { claimId, ruleId: "SYN_PASS", ruleVersion: "1", outcome: "PASS", shadow: false, detailJson: {} },
+        { claimId, ruleId: "SYN_SHADOW_BLOCK", ruleVersion: "2", outcome: "BLOCK", shadow: true, detailJson: { code: "SYN_BLOCK", message: "Synthetic shadow block" } },
+      ]);
+      const rows = await tx.select().from(s.ruleFires).where(eq(s.ruleFires.claimId, claimId)).orderBy(s.ruleFires.ruleId);
+      expect(rows).toHaveLength(2);
+      rows.forEach((row) => d.RuleFireSchema.parse(row));
+      expect(rows).toMatchObject([{ ruleId: "SYN_PASS", outcome: "PASS", shadow: false }, { ruleId: "SYN_SHADOW_BLOCK", outcome: "BLOCK", shadow: true }]);
+      expect(rows[0]!.createdAt).toMatch(/Z$/);
+    });
+  });
+
+  it("rejects an invalid RuleFire batch atomically", async () => {
+    await expect(fixtureTransaction(async (tx) => {
+      await createRuleFireRepository(tx).insertRuleFires([
+        { claimId, ruleId: "SYN_PASS", ruleVersion: "1", outcome: "PASS", shadow: false, detailJson: {} },
+        { claimId: "99999999-0000-4000-8000-000000000000", ruleId: "SYN_ORPHAN", ruleVersion: "1", outcome: "PASS", shadow: false, detailJson: {} },
+      ]);
+    })).rejects.toMatchObject({ code: "23503" });
+    expect(await connection.db.select().from(s.ruleFires).where(eq(s.ruleFires.claimId, claimId))).toEqual([]);
   });
 
   it.each([

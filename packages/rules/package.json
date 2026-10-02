@@ -13,5 +13,9 @@
   "devDependencies": {
     "typescript": "^5.6.3",
     "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "@pt-rcm/domain": "workspace:*",
+    "zod": "^3.24.2"
   }
 }
