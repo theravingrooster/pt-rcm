@@ -32,9 +32,11 @@ export const seedPayers = [
   PayerSchema.parse({
     id: "00000000-0000-4000-8000-000000000005", name: "Medicare",
     payerType: "MEDICARE", stediPayerId: null, requiresGpModifier: true,
+    authRequired: false, unitRule: "MEDICARE_8_MINUTE",
   }),
   PayerSchema.parse({
     id: "00000000-0000-4000-8000-000000000006", name: "SYN Commercial",
     payerType: "COMMERCIAL", stediPayerId: null, requiresGpModifier: false,
+    authRequired: true, unitRule: "MEDICARE_8_MINUTE",
   }),
 ];

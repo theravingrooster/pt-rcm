@@ -13,6 +13,9 @@ export type SubscriberRelationship = z.infer<typeof SubscriberRelationshipSchema
 export const PayerTypeSchema = z.enum(["MEDICARE", "COMMERCIAL"]);
 export const PayerType = PayerTypeSchema.enum;
 export type PayerType = z.infer<typeof PayerTypeSchema>;
+export const UnitRuleSchema = z.enum(["MEDICARE_8_MINUTE", "AMA_MIDPOINT"]);
+export const UnitRule = UnitRuleSchema.enum;
+export type UnitRule = z.infer<typeof UnitRuleSchema>;
 export const EncounterStatusSchema = z.enum(["DRAFT", "READY", "HELD", "CLAIMED"]);
 export const EncounterStatus = EncounterStatusSchema.enum;
 export type EncounterStatus = z.infer<typeof EncounterStatusSchema>;
@@ -110,6 +113,7 @@ export type Coverage = z.infer<typeof CoverageSchema>;
 export const PayerSchema = z.object({
   id: IdSchema, name: NonEmptyString, payerType: PayerTypeSchema,
   stediPayerId: NonEmptyString.nullable(), requiresGpModifier: z.boolean(),
+  authRequired: z.boolean(), unitRule: UnitRuleSchema,
 }).strict();
 export type Payer = z.infer<typeof PayerSchema>;
 

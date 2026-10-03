@@ -43,6 +43,13 @@
       "when": 1790957679081,
       "tag": "0005_clammy_titanium_man",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790985133327,
+      "tag": "0006_pink_cyclops",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,4 @@
-import { allocateUnits, loadMedicareMinuteLadder, MEDICARE_PT_SLP_KX_THRESHOLD_2026_CENTS, unitsLeftOnTable } from "@pt-rcm/domain";
+import { allocateAmaMidpointUnits, allocateUnits, loadMedicareMinuteLadder, MEDICARE_PT_SLP_KX_THRESHOLD_2026_CENTS, unitsLeftOnTable } from "@pt-rcm/domain";
 import type { Rule, RuleContext, RuleResult } from "./types.js";
 
 // CPT is an AMA-licensed code set. These local fixture codes are not a
@@ -38,9 +38,14 @@ export const gpModifierRule: Rule = Object.freeze<Rule>({
 });
 
 export const eightMinuteAppliedRule: Rule = Object.freeze<Rule>({
-  id: "eight-minute-applied", version: 1, description: "Compare submitted timed units with allocation from the daily timed total.",
+  id: "eight-minute-applied", version: 1, description: "Compare submitted timed units with the payer's timed-unit allocation.",
   evaluate(ctx): RuleResult {
-    const allocation = allocateUnits(ctx.minuteLines, loadMedicareMinuteLadder());
+    // Medicare always pools the daily timed minutes. An AMA midpoint policy
+    // applies only to a commercial payer and rounds each CPT separately.
+    const amaMidpoint = ctx.payer.payerType === "COMMERCIAL" && ctx.payer.unitRule === "AMA_MIDPOINT";
+    const allocation = amaMidpoint
+      ? allocateAmaMidpointUnits(ctx.minuteLines)
+      : allocateUnits(ctx.minuteLines, loadMedicareMinuteLadder());
     if (ctx.draftClaim.lines.length !== allocation.lines.length || ctx.draftClaim.lines.some((line, index) =>
       line.cptCode !== allocation.lines[index]!.cptCode || line.minutes !== allocation.lines[index]!.minutes)) {
       return { outcome: "BLOCK", code: "DRAFT_LINES_MISMATCH", message: "Draft lines must match the recorded encounter lines." };
@@ -53,7 +58,12 @@ export const eightMinuteAppliedRule: Rule = Object.freeze<Rule>({
       if (line.units < allocation.lines[index]!.units) under.push(index);
     });
     if (over.length) return { outcome: "BLOCK", code: "OVERBILLED_UNITS", message: "Submitted timed units exceed the allocated units.", detail: { lineIndexes: over } };
-    if (under.length) return { outcome: "FLAG", code: "UNDERBILLED_UNITS", message: "Submitted timed units are below allocation; review without automatically increasing units.", detail: { lineIndexes: under, unitsLeftOnTable: unitsLeftOnTable(ctx.minuteLines) } };
+    if (under.length) return { outcome: "FLAG", code: "UNDERBILLED_UNITS", message: "Submitted timed units are below allocation; review without automatically increasing units.", detail: {
+      lineIndexes: under,
+      unitsLeftOnTable: amaMidpoint
+        ? under.reduce((sum, index) => sum + allocation.lines[index]!.units - ctx.draftClaim.lines[index]!.units, 0)
+        : unitsLeftOnTable(ctx.minuteLines),
+    } };
     return { outcome: "PASS" };
   },
 });
@@ -89,7 +99,11 @@ export const authVisitsRule: Rule = Object.freeze<Rule>({
   id: "auth-visits", version: 1, description: "Check the linked authorization's recorded visit use.",
   evaluate(ctx): RuleResult {
     if (!ctx.encounter.authorizationId) {
-      return ctx.payer.payerType === "COMMERCIAL" ? { outcome: "FLAG", code: "AUTH_NOT_LINKED", message: "No authorization is linked for the commercial payer." } : { outcome: "PASS" };
+      return ctx.payer.authRequired
+        ? { outcome: "BLOCK", code: "AUTH_NOT_LINKED", message: "This payer requires an authorization linked to the encounter." }
+        : ctx.payer.payerType === "COMMERCIAL"
+          ? { outcome: "FLAG", code: "AUTH_NOT_LINKED", message: "No authorization is linked for the commercial payer." }
+          : { outcome: "PASS" };
     }
     const authorization = ctx.authorizations.find((auth) => auth.id === ctx.encounter.authorizationId
       && auth.patientId === ctx.encounter.patientId && auth.payerId === ctx.payer.id);

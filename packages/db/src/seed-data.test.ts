@@ -14,5 +14,9 @@ describe("synthetic seed fixtures", () => {
     }
     expect(seedPayers.map((payer) => PayerSchema.parse(payer).name)).toEqual(["Medicare", "SYN Commercial"]);
     expect(seedPayers.every((payer) => payer.stediPayerId === null)).toBe(true);
+    expect(seedPayers.map(({ requiresGpModifier, authRequired, unitRule }) => ({ requiresGpModifier, authRequired, unitRule }))).toEqual([
+      { requiresGpModifier: true, authRequired: false, unitRule: "MEDICARE_8_MINUTE" },
+      { requiresGpModifier: false, authRequired: true, unitRule: "MEDICARE_8_MINUTE" },
+    ]);
   });
 });

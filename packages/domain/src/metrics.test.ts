@@ -3,7 +3,8 @@ import { computeMetrics, TIMED_UNIT_FIXTURE_FEE_CENTS, type MetricClaim } from "
 
 const line = (cptCode: string, minutes: number, timed = true) => ({ cptCode, minutes, timed });
 function claim(overrides: Partial<MetricClaim> = {}): MetricClaim {
-  return { status: "DRAFT", everSubmitted: false, operatorTaskEverOpened: false,
+  return { status: "DRAFT", payerType: "MEDICARE", unitRule: "MEDICARE_8_MINUTE",
+    everSubmitted: false, operatorTaskEverOpened: false,
     totalChargeCents: 0, minuteLines: null, billedLines: [], remits: [], ...overrides };
 }
 
@@ -54,6 +55,22 @@ describe("computeMetrics", () => {
     })]);
     expect(metric.unitsLeftOnTable).toBe(expected);
     expect(metric.centsLeftOnTable).toBe(expected * 4500);
+  });
+
+  it.each([
+    { payerType: "MEDICARE" as const, unitRule: "MEDICARE_8_MINUTE" as const, expectedUnits: 1 },
+    { payerType: "MEDICARE" as const, unitRule: "AMA_MIDPOINT" as const, expectedUnits: 1 },
+    { payerType: "COMMERCIAL" as const, unitRule: "MEDICARE_8_MINUTE" as const, expectedUnits: 1 },
+    { payerType: "COMMERCIAL" as const, unitRule: "AMA_MIDPOINT" as const, expectedUnits: 0 },
+  ])("uses $payerType $unitRule to count saved underbilling", ({ payerType, unitRule, expectedUnits }) => {
+    // 20 + 20 minutes: pooled Medicare yields 3, per-code midpoint yields 2.
+    // The saved claim has 2 units and should stay at 2 regardless of policy.
+    const metric = computeMetrics([claim({ status: "SCRUBBED", payerType, unitRule,
+      minuteLines: [line("97110", 20), line("97530", 20)],
+      billedLines: [{ cptCode: "97110", units: 1 }, { cptCode: "97530", units: 1 }],
+    })]);
+    expect(metric.unitsLeftOnTable).toBe(expectedUnits);
+    expect(metric.centsLeftOnTable).toBe(expectedUnits * 4500);
   });
 
   it("excludes patient responsibility and unremitted claims from payer collection", () => {

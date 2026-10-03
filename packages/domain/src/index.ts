@@ -2,6 +2,7 @@ export * from "./models.js";
 export * from "./fixtures/index.js";
 export * from "./encounter-ingest.js";
 export * from "./eightMinute.js";
+export * from "./amaMidpoint.js";
 export * from "./claimDocument.js";
 export * from "./lifecycle.js";
 export * from "./remit.js";

@@ -8,7 +8,8 @@ export function makeClaimDocumentInput(): ClaimDocumentInput {
   const address = { line1: "1 SYN Test Way", line2: null, city: "SYN City", state: "CA", postalCode: "00000", country: "US" as const };
   const organization = { id: id(1), name: "SYN Ortho PT", billingNpi: "0000000001", taxId: "SYN-TAX-1", taxonomyCode: "225100000X", address };
   const patient = { id: id(10), organizationId: organization.id, externalId: "SYN-PATIENT-DOCUMENT", firstName: "SYN", lastName: "Shoulder Demo", dob: "2000-01-01", sex: "U" as const, address };
-  const payer = { id: id(5), name: "Medicare", payerType: "MEDICARE" as const, stediPayerId: null, requiresGpModifier: true };
+  const payer = { id: id(5), name: "Medicare", payerType: "MEDICARE" as const, stediPayerId: null,
+    requiresGpModifier: true, authRequired: false, unitRule: "MEDICARE_8_MINUTE" as const };
   const encounter = { id: id(11), organizationId: organization.id, externalId: "SYN-ENCOUNTER-DOCUMENT", patientId: patient.id,
     renderingProviderId: id(3), facilityId: id(2), dateOfService: "2026-10-01", status: "DRAFT" as const, authorizationId: null };
   // CPT is AMA-licensed. This is a local test fixture, not the CPT data file.

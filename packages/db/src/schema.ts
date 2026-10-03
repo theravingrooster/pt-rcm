@@ -6,7 +6,7 @@ import {
 import {
   ClaimStatusSchema, EncounterStatusSchema, PatientSexSchema, PayerTypeSchema,
   ProviderRoleSchema, RuleOutcomeSchema, RuleSetStatusSchema,
-  SubscriberRelationshipSchema, TaskOwnerSchema, TaskStatusSchema,
+  SubscriberRelationshipSchema, TaskOwnerSchema, TaskStatusSchema, UnitRuleSchema,
   type Address, type JsonObject,
 } from "@pt-rcm/domain";
 
@@ -14,6 +14,7 @@ export const providerRole = pgEnum("provider_role", ProviderRoleSchema.options);
 export const patientSex = pgEnum("patient_sex", PatientSexSchema.options);
 export const subscriberRelationship = pgEnum("subscriber_relationship", SubscriberRelationshipSchema.options);
 export const payerType = pgEnum("payer_type", PayerTypeSchema.options);
+export const unitRule = pgEnum("unit_rule", UnitRuleSchema.options);
 export const encounterStatus = pgEnum("encounter_status", EncounterStatusSchema.options);
 export const claimStatus = pgEnum("claim_status", ClaimStatusSchema.options);
 export const ruleSetStatus = pgEnum("rule_set_status", RuleSetStatusSchema.options);
@@ -92,6 +93,8 @@ export const payers = pgTable("payers", {
   payerType: payerType("payer_type").notNull(),
   stediPayerId: text("stedi_payer_id"),
   requiresGpModifier: boolean("requires_gp_modifier").notNull(),
+  authRequired: boolean("auth_required").notNull().default(false),
+  unitRule: unitRule("unit_rule").notNull().default("MEDICARE_8_MINUTE"),
 });
 
 export const coverages = pgTable("coverages", {

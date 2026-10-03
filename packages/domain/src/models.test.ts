@@ -24,7 +24,8 @@ const cases: { name: string; schema: z.ZodTypeAny; valid: Record<string, unknown
     valid: { id, patientId: id, payerId: id, memberId: "SYN-MEMBER-1", groupNumber: "SYN-GROUP", subscriberRelationship: "SELF", planName: "SYN Plan", active: true },
     invalid: { memberId: "MEMBER-1" } },
   { name: "Payer", schema: d.PayerSchema,
-    valid: { id, name: "SYN Commercial", payerType: "COMMERCIAL", stediPayerId: null, requiresGpModifier: false },
+    valid: { id, name: "SYN Commercial", payerType: "COMMERCIAL", stediPayerId: null,
+      requiresGpModifier: false, authRequired: true, unitRule: "MEDICARE_8_MINUTE" },
     invalid: { requiresGpModifier: "false" } },
   { name: "Encounter", schema: d.EncounterSchema,
     valid: { id, organizationId: id, externalId: "SYN-ENC-1", patientId: id, renderingProviderId: id, facilityId: id, dateOfService: "2026-10-01", status: "DRAFT" },
@@ -78,6 +79,19 @@ describe.each(cases)("$name", ({ schema, valid, invalid }) => {
 });
 
 describe("shared value schemas", () => {
+  it.each(["MEDICARE_8_MINUTE", "AMA_MIDPOINT"])("accepts the supported payer unit rule %s", (unitRule) => {
+    const payer = cases.find(({ name }) => name === "Payer")!.valid;
+    expect(d.PayerSchema.parse({ ...payer, unitRule }).unitRule).toBe(unitRule);
+  });
+  it.each(["", "DAILY_MIDPOINT", "MEDICARE", null, undefined])("rejects unsupported payer unit rule %s", (unitRule) => {
+    const payer = cases.find(({ name }) => name === "Payer")!.valid;
+    expect(d.PayerSchema.safeParse({ ...payer, unitRule }).success).toBe(false);
+  });
+  it("requires an explicit payer authorization policy", () => {
+    const payer = cases.find(({ name }) => name === "Payer")!.valid;
+    expect(d.PayerSchema.safeParse({ ...payer, authRequired: undefined }).success).toBe(false);
+    expect(d.PayerSchema.safeParse({ ...payer, authRequired: "true" }).success).toBe(false);
+  });
   it("defaults unchecked coverage eligibility to null and validates cached values", () => {
     const unchecked = d.CoverageSchema.parse(cases.find(({ name }) => name === "Coverage")!.valid);
     expect(unchecked).toMatchObject({ eligible: null, checkedAt: null, deductibleRemainingCents: null, planActive: null });
@@ -119,5 +133,6 @@ describe("shared value schemas", () => {
     expect(d.ProviderRole.RENDERING).toBe("RENDERING");
     expect(d.ClaimStatus.PATIENT_BALANCE).toBe("PATIENT_BALANCE");
     expect(d.RuleOutcome.DOWNGRADE).toBe("DOWNGRADE");
+    expect(d.UnitRule.AMA_MIDPOINT).toBe("AMA_MIDPOINT");
   });
 });

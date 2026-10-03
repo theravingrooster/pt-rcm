@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { computeMetrics, IdSchema, MetricMinuteLinesSchema, type MetricClaim } from "@pt-rcm/domain";
+import { computeMetrics, IdSchema, MetricMinuteLinesSchema, PayerTypeSchema, UnitRuleSchema, type MetricClaim } from "@pt-rcm/domain";
 import type { Database } from "./index.js";
 import * as s from "./schema.js";
 
@@ -35,8 +35,17 @@ export async function readOperatorMetrics(db: Database, organizationId: string) 
     const submittedIds = new Set(submittedAudits.map((audit) => audit.entityId));
     const input: MetricClaim[] = claims.map(({ claim }) => {
       const source = MetricMinuteLinesSchema.safeParse(claim.snapshotJson.minuteLines);
+      const savedPayer = claim.snapshotJson.payer;
+      const policy = savedPayer && typeof savedPayer === "object" && !Array.isArray(savedPayer) ? savedPayer : null;
+      const payerType = PayerTypeSchema.safeParse(policy?.payerType);
+      const unitRule = UnitRuleSchema.safeParse(policy?.unitRule);
       return {
-        status: claim.status, everSubmitted: submittedIds.has(claim.id),
+        status: claim.status,
+        // A saved scrub carries its own payer policy. Older snapshots without
+        // this policy used Medicare daily pooling, even for commercial payers.
+        payerType: payerType.success ? payerType.data : "MEDICARE",
+        unitRule: unitRule.success ? unitRule.data : "MEDICARE_8_MINUTE",
+        everSubmitted: submittedIds.has(claim.id),
         operatorTaskEverOpened: taskIds.has(claim.id), totalChargeCents: claim.totalChargeCents,
         minuteLines: source.success ? source.data : null,
         billedLines: lines.filter((line) => line.claimId === claim.id).map(({ cptCode, units }) => ({ cptCode, units })),

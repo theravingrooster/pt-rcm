@@ -1,9 +1,10 @@
 import { z } from "zod";
+import { allocateAmaMidpointUnits } from "./amaMidpoint.js";
 import { allocateUnits } from "./eightMinute.js";
 import { getCptFixture } from "./fixtures/cpt.js";
 import { PT_FIXTURE_FEES_CENTS } from "./fixtures/fees.js";
 import { loadMedicareMinuteLadder } from "./fixtures/medicare.js";
-import { ClaimStatusSchema, CptCodeSchema, MoneyCentsSchema, NonNegativeIntSchema } from "./models.js";
+import { ClaimStatusSchema, CptCodeSchema, MoneyCentsSchema, NonNegativeIntSchema, PayerTypeSchema, UnitRuleSchema } from "./models.js";
 
 export const MetricMinuteLinesSchema = z.array(z.object({
   cptCode: CptCodeSchema, minutes: NonNegativeIntSchema, timed: z.boolean(),
@@ -11,6 +12,8 @@ export const MetricMinuteLinesSchema = z.array(z.object({
 
 export const MetricClaimSchema = z.object({
   status: ClaimStatusSchema,
+  payerType: PayerTypeSchema,
+  unitRule: UnitRuleSchema,
   everSubmitted: z.boolean(),
   operatorTaskEverOpened: z.boolean(),
   totalChargeCents: MoneyCentsSchema,
@@ -65,7 +68,9 @@ export function computeMetrics(input: readonly MetricClaim[]) {
         const fixture = getCptFixture(line.cptCode);
         if (!fixture || fixture.timed !== line.timed) throw new RangeError("Saved service timing does not match the CPT fixture");
       }
-      const allocation = allocateUnits(claim.minuteLines, loadMedicareMinuteLadder());
+      const allocation = claim.payerType === "COMMERCIAL" && claim.unitRule === "AMA_MIDPOINT"
+        ? allocateAmaMidpointUnits(claim.minuteLines)
+        : allocateUnits(claim.minuteLines, loadMedicareMinuteLadder());
       const expectedTimed = allocation.totalUnits - claim.minuteLines.filter((line) => !line.timed).length;
       const billedTimed = safeSum(claim.billedLines.map((line) => {
         const fixture = getCptFixture(line.cptCode);
@@ -73,7 +78,8 @@ export function computeMetrics(input: readonly MetricClaim[]) {
         return fixture.timed ? line.units : 0;
       }));
       // Saved units, rather than hypothetical per-code rounding, determine the
-      // actual shortage. A correctly billed pooled claim contributes zero.
+      // actual shortage under the saved payer policy. A correctly billed claim
+      // contributes zero; metrics do not add units to a saved claim.
       lostUnits.push(Math.max(0, expectedTimed - billedTimed));
     }
     if (!claim.remits.length) continue;

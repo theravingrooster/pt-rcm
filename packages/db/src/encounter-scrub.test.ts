@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { ClaimNotSubmittable, ClaimStatusSchema, IllegalClaimTransition, type EncounterIngestInput } from "@pt-rcm/domain";
-import { applySuggestedModifier, checkCoverageEligibility, completeTask, createDatabase, getClaimDocument, listTasks, scrubEncounter, submitScrubbedClaim, transitionStoredClaim, upsertEncounter } from "./index.js";
+import { applySuggestedModifier, checkCoverageEligibility, completeTask, createDatabase, getClaimDocument, getOperatorEncounter,
+  listOperatorEncounters, listTasks, scrubEncounter, submitScrubbedClaim, transitionStoredClaim, upsertEncounter, type Database } from "./index.js";
 import { FixtureClearinghouse } from "@pt-rcm/clearinghouse";
 import * as ruleFireRepository from "./rule-fire-repository.js";
 import * as s from "./schema.js";
@@ -147,6 +148,77 @@ describe.skipIf(!url)("transactional PT scrub", () => {
     expect(result).toMatchObject({ claimId: first.claimId, status: "BLOCKED", totalUnits: 4, totalChargeCents: 18000, submissionAllowed: false });
     expect(result.blocks).toEqual(expect.arrayContaining([expect.objectContaining({ code: "OVERBILLED_UNITS" })]));
     expect((await stored(result.claimId)).claim!.status).toBe("BLOCKED");
+  });
+
+  it("SYN Commercial requires linked authorization, omits GP, and keeps the fixture daily rule", async () => {
+    const body = input();
+    body.patient.coverage.payerCode = "SYN_COMMERCIAL";
+    const { encounterId, patientId } = await create(body);
+    const missing = await scrub(encounterId);
+    expect(missing).toMatchObject({ status: "BLOCKED", totalUnits: 3, submissionAllowed: false });
+    expect(missing.blocks).toEqual(expect.arrayContaining([expect.objectContaining({ code: "AUTH_NOT_LINKED" })]));
+    expect(missing.findings.find((finding) => finding.ruleId === "gp-modifier")).toMatchObject({ outcome: "PASS" });
+    await expect(submitScrubbedClaim(connection.db, organizationId, missing.claimId,
+      { adapter: "fixture", clearinghouse: new FixtureClearinghouse() })).rejects.toMatchObject({ code: "CLAIM_NOT_SUBMITTABLE" });
+
+    const authorizationId = randomUUID();
+    await connection.db.insert(s.authorizations).values({ id: authorizationId, patientId, payerId: seedPayers[1]!.id,
+      cptFamily: "SYN-PT", visitsAuthorized: 3, visitsUsed: 0, startDate: "2026-01-01", endDate: "2026-12-31" });
+    await connection.db.update(s.encounters).set({ authorizationId }).where(eq(s.encounters.id, encounterId));
+    const ready = await scrub(encounterId);
+    expect(ready).toMatchObject({ status: "SCRUBBED", totalUnits: 3, totalChargeCents: 13500, submissionAllowed: true });
+    expect(ready.findings.find((finding) => finding.ruleId === "auth-visits")).toMatchObject({ outcome: "PASS" });
+    expect((await stored(ready.claimId)).lines.map(({ units, modifiers }) => ({ units, modifiers })))
+      .toEqual([{ units: 2, modifiers: [] }, { units: 1, modifiers: [] }]);
+    expect(await submitScrubbedClaim(connection.db, organizationId, ready.claimId,
+      { adapter: "fixture", clearinghouse: new FixtureClearinghouse() })).toMatchObject({ status: "SUBMITTED" });
+  });
+
+  it("an AMA commercial policy uses per-code units and flags underbilling without raising saved units", async () => {
+    const rollback = new Error("SYN restore fixture payer policy");
+    await expect(connection.db.transaction(async (tx) => {
+      const scoped = tx as unknown as Database;
+      await tx.update(s.payers).set({ unitRule: "AMA_MIDPOINT" }).where(eq(s.payers.id, seedPayers[1]!.id));
+      const body = input();
+      body.patient.coverage.payerCode = "SYN_COMMERCIAL";
+      const { encounterId, patientId } = await upsertEncounter(scoped, organizationId, body);
+      const authorizationId = randomUUID();
+      await tx.insert(s.authorizations).values({ id: authorizationId, patientId, payerId: seedPayers[1]!.id,
+        cptFamily: "SYN-PT", visitsAuthorized: 3, visitsUsed: 0, startDate: "2026-01-01", endDate: "2026-12-31" });
+      await tx.update(s.encounters).set({ authorizationId }).where(eq(s.encounters.id, encounterId));
+      expect((await listOperatorEncounters(scoped, organizationId)).find((row) => row.encounter.id === encounterId))
+        .toMatchObject({ units: 2, unitsSource: "Allocation preview" });
+      expect((await getOperatorEncounter(scoped, organizationId, encounterId))!.allocation.totalUnits).toBe(2);
+      const first = await scrubEncounter(scoped, organizationId, encounterId);
+      expect(first).toMatchObject({ status: "SCRUBBED", totalUnits: 2, totalChargeCents: 9000, submissionAllowed: true });
+      expect(first.findings.find((finding) => finding.ruleId === "eight-minute-applied")).toMatchObject({ outcome: "PASS" });
+      expect(first.lines.map((line) => line.units)).toEqual([1, 1]);
+      expect(first.lines.every((line) => line.modifiers.length === 0)).toBe(true);
+      const [saved] = await tx.select().from(s.claims).where(eq(s.claims.id, first.claimId));
+      expect(saved!.snapshotJson.allocatedUnits).toMatchObject({ totalUnits: 2, totalTimedMinutes: 40 });
+
+      // With more minutes on one code, retain an operator's smaller saved unit
+      // count even though the fresh AMA calculation would support three.
+      const later = input();
+      later.patient.coverage.payerCode = "SYN_COMMERCIAL";
+      later.minuteLines = [{ cptCode: "97110", minutes: 23 }, { cptCode: "97530", minutes: 20 }];
+      const second = await upsertEncounter(scoped, organizationId, later);
+      const secondAuth = randomUUID();
+      await tx.insert(s.authorizations).values({ id: secondAuth, patientId: second.patientId, payerId: seedPayers[1]!.id,
+        cptFamily: "SYN-PT", visitsAuthorized: 3, visitsUsed: 0, startDate: "2026-01-01", endDate: "2026-12-31" });
+      await tx.update(s.encounters).set({ authorizationId: secondAuth }).where(eq(s.encounters.id, second.encounterId));
+      const initial = await scrubEncounter(scoped, organizationId, second.encounterId);
+      expect(initial.lines.map((line) => line.units)).toEqual([2, 1]);
+      await tx.update(s.claimLines).set({ units: 1 }).where(and(
+        eq(s.claimLines.claimId, initial.claimId), eq(s.claimLines.cptCode, "97110")));
+      const under = await scrubEncounter(scoped, organizationId, second.encounterId);
+      expect(under).toMatchObject({ claimId: initial.claimId, status: "SCRUBBED", totalUnits: 2, submissionAllowed: true });
+      expect(under.findings.find((finding) => finding.ruleId === "eight-minute-applied"))
+        .toMatchObject({ outcome: "FLAG", code: "UNDERBILLED_UNITS", detail: { unitsLeftOnTable: 1 } });
+      expect((await tx.select().from(s.claimLines).where(eq(s.claimLines.claimId, initial.claimId))
+        .orderBy(s.claimLines.cptCode)).map((line) => line.units)).toEqual([1, 1]);
+      throw rollback;
+    })).rejects.toBe(rollback);
   });
 
   it("requires another scrub after an eligibility check without creating a new claim version", async () => {

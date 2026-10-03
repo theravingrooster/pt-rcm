@@ -2,6 +2,8 @@
 
 Outpatient physical therapy billing rules prototype. Synthetic data only. Fixture clearinghouse. No live claims.
 
+Medicare uses the daily 8-minute rule. Some commercial payers use AMA midpoint units per code; the SYN Commercial fixture uses the Medicare 8-minute rule.
+
 ## Run locally
 
 ```bash

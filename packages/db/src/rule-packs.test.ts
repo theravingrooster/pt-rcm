@@ -58,10 +58,6 @@ describe.skipIf(!url)("versioned rule pack lifecycle", () => {
       const v1 = packsBefore.find((pack) => pack.version === "1")!;
       const v2 = packsBefore.find((pack) => pack.version === "2")!;
       const v3 = packsBefore.find((pack) => pack.version === "3")!;
-      await expect(tx.transaction((nested) => nested.update(s.ruleSets).set({ notes: "SYN attempted rewrite" }).where(eq(s.ruleSets.id, v1.id))))
-        .rejects.toMatchObject({ code: "23514" });
-      await expect(tx.transaction((nested) => nested.update(s.ruleSets).set({ status: "DRAFT" }).where(eq(s.ruleSets.id, v3.id))))
-        .rejects.toMatchObject({ code: "23514" });
       expect(fires.filter((fire) => fire.shadow)).toHaveLength(10);
       expect(fires.filter((fire) => !fire.shadow)).toHaveLength(8);
       expect(fires.filter((fire) => fire.shadow).every((fire) => fire.ruleSetId === v3.id)).toBe(true);
@@ -72,8 +68,6 @@ describe.skipIf(!url)("versioned rule pack lifecycle", () => {
       expect((await tx.select().from(s.ruleSets).where(eq(s.ruleSets.id, v1.id)))[0]!.status).toBe("RETIRED");
       expect((await currentRulePack(tx, "ACTIVE")).pack.rules.map((rule) => rule.id)).toContain("timed-code-cap");
       expect((await currentRulePack(tx, "ACTIVE")).pack.rules.map((rule) => rule.id)).toContain("coverage-inactive");
-      await expect(tx.transaction((nested) => nested.update(s.ruleSets).set({ definitionJson: v1.definitionJson }).where(eq(s.ruleSets.id, v3.id))))
-        .rejects.toMatchObject({ code: "23514" });
       await expect(promoteRulePackInTransaction(tx, "1"))
         .rejects.toMatchObject({ code: "RULE_PACK_NOT_SHADOW" });
       const after = await scrubEncounter(scoped, seedOrganization.id, encounterId);
@@ -120,6 +114,15 @@ describe.skipIf(!url)("versioned rule pack lifecycle", () => {
         expect.objectContaining({ ruleId: "coverage-inactive", outcome: "FLAG", code: "ELIGIBILITY_STALE" }),
       ]));
       expect((await tx.select().from(s.ruleFires).where(and(eq(s.ruleFires.claimId, active.claimId), eq(s.ruleFires.ruleSetId, v2.id))))).toHaveLength(0);
+      // PGlite can lose visibility of earlier rows after rolling back a
+      // constraint failure in a nested savepoint. Check immutability last so
+      // the preceding lifecycle assertions still exercise the same rows.
+      await expect(tx.transaction((nested) => nested.update(s.ruleSets).set({ notes: "SYN attempted rewrite" }).where(eq(s.ruleSets.id, v1.id))))
+        .rejects.toMatchObject({ code: "23514" });
+      await expect(tx.transaction((nested) => nested.update(s.ruleSets).set({ status: "DRAFT" }).where(eq(s.ruleSets.id, v3.id))))
+        .rejects.toMatchObject({ code: "23514" });
+      await expect(tx.transaction((nested) => nested.update(s.ruleSets).set({ definitionJson: v1.definitionJson }).where(eq(s.ruleSets.id, v3.id))))
+        .rejects.toMatchObject({ code: "23514" });
       throw rollback;
     })).rejects.toBe(rollback);
   });

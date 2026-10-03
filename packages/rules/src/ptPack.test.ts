@@ -17,7 +17,7 @@ function context(lines: Line[] = [{ cptCode: "97110", minutes: 20 }, { cptCode: 
   })) };
   return { ...base, minuteLines, allocatedUnits, draftClaim,
     claimChargeCents: draftClaim.lines.reduce((sum, line) => sum + fixtureLineChargeCents(line.cptCode, line.units), 0),
-    payer: { ...base.payer, payerType: "MEDICARE", requiresGpModifier: true }, yearToDateBilledCents: 0,
+    payer: { ...base.payer, payerType: "MEDICARE", requiresGpModifier: true, authRequired: false }, yearToDateBilledCents: 0,
     planOfCare: { id: testClaimId, patientId: base.encounter.patientId, signedDate: "2026-09-25", certifyingNpi: "0000000004", expiresOn: null } };
 }
 
@@ -65,6 +65,35 @@ describe("gp-modifier", () => {
 });
 
 describe("eight-minute-applied", () => {
+  it.each([
+    { payerType: "MEDICARE", unitRule: "MEDICARE_8_MINUTE", units: [2, 1], outcome: "PASS" },
+    { payerType: "MEDICARE", unitRule: "AMA_MIDPOINT", units: [2, 1], outcome: "PASS" },
+    { payerType: "COMMERCIAL", unitRule: "MEDICARE_8_MINUTE", units: [2, 1], outcome: "PASS" },
+    { payerType: "COMMERCIAL", unitRule: "AMA_MIDPOINT", units: [2, 1], outcome: "BLOCK" },
+    { payerType: "COMMERCIAL", unitRule: "AMA_MIDPOINT", units: [1, 1], outcome: "PASS" },
+  ] as const)("$payerType with $unitRule and $units produces $outcome", ({ payerType, unitRule, units, outcome }) => {
+    const base = context([{ cptCode: "97110", minutes: 20, units: units[0] }, { cptCode: "97530", minutes: 20, units: units[1] }]);
+    const ctx = { ...base, payer: { ...base.payer, payerType, unitRule } };
+    const before = structuredClone(ctx);
+    expect(eightMinuteAppliedRule.evaluate(ctx)).toMatchObject(outcome === "BLOCK"
+      ? { outcome, code: "OVERBILLED_UNITS", detail: { lineIndexes: [0] } }
+      : { outcome });
+    expect(ctx).toEqual(before);
+  });
+
+  it("flags AMA midpoint underbilling without applying more units to the claim", () => {
+    const base = context([{ cptCode: "97110", minutes: 20, units: 0 }, { cptCode: "97530", minutes: 20, units: 0 }]);
+    const ctx = { ...base, payer: { ...base.payer, payerType: "COMMERCIAL" as const, unitRule: "AMA_MIDPOINT" as const } };
+    const originalDraft = structuredClone(ctx.draftClaim);
+    const run = runRules([eightMinuteAppliedRule], ctx);
+    expect(run.findings[0]).toMatchObject({ outcome: "FLAG", code: "UNDERBILLED_UNITS",
+      detail: { lineIndexes: [0, 1], unitsLeftOnTable: 2 } });
+    expect(run.downgrades).toEqual([]);
+    expect(run.submissionAllowed).toBe(true);
+    expect(applyDowngrades(ctx.draftClaim, run.downgrades)).toEqual(originalDraft);
+    expect(ctx.draftClaim).toEqual(originalDraft);
+  });
+
   it.each([
     { units: [2, 1], outcome: "PASS", code: undefined },
     { units: [3, 1], outcome: "BLOCK", code: "OVERBILLED_UNITS" },
@@ -124,9 +153,13 @@ describe("kx-threshold", () => {
 });
 
 describe("auth-visits", () => {
-  it.each([["MEDICARE", "PASS"], ["COMMERCIAL", "FLAG"]] as const)("unlinked %s => %s", (payerType, outcome) => {
+  it.each([
+    { payerType: "MEDICARE", authRequired: false, outcome: "PASS" },
+    { payerType: "COMMERCIAL", authRequired: false, outcome: "FLAG" },
+    { payerType: "COMMERCIAL", authRequired: true, outcome: "BLOCK" },
+  ] as const)("unlinked $payerType, authRequired=$authRequired => $outcome", ({ payerType, authRequired, outcome }) => {
     const ctx = context();
-    expect(authVisitsRule.evaluate({ ...ctx, payer: { ...ctx.payer, payerType } })).toMatchObject(outcome === "FLAG" ? { outcome, code: "AUTH_NOT_LINKED" } : { outcome });
+    expect(authVisitsRule.evaluate({ ...ctx, payer: { ...ctx.payer, payerType, authRequired } })).toMatchObject(outcome === "PASS" ? { outcome } : { outcome, code: "AUTH_NOT_LINKED" });
   });
   it.each([[0, 1, "PASS"], [1, 1, "BLOCK"], [2, 1, "BLOCK"], [0, 0, "BLOCK"]] as const)("%i used / %i authorized => %s", (visitsUsed, visitsAuthorized, outcome) => {
     const ctx = context();

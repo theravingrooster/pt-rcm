@@ -26,7 +26,8 @@ export function makeContext(mode: RuleContext["mode"] = "active"): RuleContext {
       groupNumber: null, planName: null, subscriberRelationship: "SELF", active: true,
       eligible: null, checkedAt: null, deductibleRemainingCents: null, planActive: null,
     },
-    payer: { id: id("9"), name: "SYN Test Payer", payerType: "COMMERCIAL", stediPayerId: null, requiresGpModifier: false },
+    payer: { id: id("9"), name: "SYN Test Payer", payerType: "COMMERCIAL", stediPayerId: null,
+      requiresGpModifier: false, authRequired: false, unitRule: "MEDICARE_8_MINUTE" },
     authorizations: [], planOfCare: null, yearToDateBilledCents: 240000, mode,
   };
 }

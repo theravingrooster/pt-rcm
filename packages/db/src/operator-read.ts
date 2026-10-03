@@ -1,11 +1,18 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { allocateUnits, ClaimDocumentSchema, IdSchema, loadMedicareMinuteLadder, renderClaimDocumentJson, type Claim, type RuleFire } from "@pt-rcm/domain";
+import { allocateAmaMidpointUnits, allocateUnits, ClaimDocumentSchema, IdSchema, loadMedicareMinuteLadder,
+  renderClaimDocumentJson, type Claim, type Payer, type RuleFire, type UnitAllocationInputLine } from "@pt-rcm/domain";
 import type { Database } from "./index.js";
 import { ClaimDocumentReadError, readClaimDocument } from "./claim-document.js";
 import * as s from "./schema.js";
 
 type Reader = Pick<Database, "select">;
 const readOnly = { isolationLevel: "repeatable read", accessMode: "read only" } as const;
+
+function previewAllocation(lines: readonly UnitAllocationInputLine[], payer: Payer | undefined) {
+  return payer?.payerType === "COMMERCIAL" && payer.unitRule === "AMA_MIDPOINT"
+    ? allocateAmaMidpointUnits(lines)
+    : allocateUnits(lines, loadMedicareMinuteLadder());
+}
 
 async function latestFindings(db: Reader, claimIds: string[]) {
   if (!claimIds.length) return [];
@@ -46,9 +53,12 @@ export async function listOperatorEncounters(db: Database, organizationId: strin
       .where(eq(s.encounters.organizationId, organizationId)).orderBy(desc(s.encounters.dateOfService), s.encounters.externalId);
     if (!rows.length) return [];
     const ids = rows.map((row) => row.encounter.id);
-    const [claims, minutes] = await Promise.all([
+    const [claims, minutes, policies] = await Promise.all([
       tx.selectDistinctOn([s.claims.encounterId]).from(s.claims).where(inArray(s.claims.encounterId, ids)).orderBy(s.claims.encounterId, desc(s.claims.version)),
       tx.select().from(s.encounterMinuteLines).where(inArray(s.encounterMinuteLines.encounterId, ids)).orderBy(s.encounterMinuteLines.cptCode, s.encounterMinuteLines.id),
+      tx.select({ patientId: s.coverages.patientId, payer: s.payers }).from(s.coverages)
+        .innerJoin(s.payers, eq(s.payers.id, s.coverages.payerId))
+        .where(and(inArray(s.coverages.patientId, rows.map(({ patient }) => patient.id)), eq(s.coverages.active, true))),
     ]);
     const claimIds = claims.map((claim) => claim.id);
     const [lines, findings] = await Promise.all([
@@ -58,8 +68,9 @@ export async function listOperatorEncounters(db: Database, organizationId: strin
     const byEncounter = new Map(claims.map((claim) => [claim.encounterId, claim]));
     return rows.map(({ encounter, patient }) => {
       const claim = byEncounter.get(encounter.id);
+      const payers = policies.filter((policy) => policy.patientId === patient.id);
       const units = claim ? lines.filter((line) => line.claimId === claim.id).reduce((sum, line) => sum + line.units, 0)
-        : allocateUnits(minutes.filter((line) => line.encounterId === encounter.id), loadMedicareMinuteLadder()).totalUnits;
+        : previewAllocation(minutes.filter((line) => line.encounterId === encounter.id), payers.length === 1 ? payers[0]!.payer : undefined).totalUnits;
       return { encounter, patient, claim: claim ?? null, units, unitsSource: claim ? "Claim" : "Allocation preview",
         blocks: findings.filter((finding) => finding.claimId === claim?.id && !finding.shadow && finding.outcome === "BLOCK").length };
     });
@@ -74,10 +85,12 @@ export async function getOperatorEncounter(db: Database, organizationId: string,
       .innerJoin(s.serviceFacilities, eq(s.serviceFacilities.id, s.encounters.facilityId))
       .where(and(eq(s.encounters.id, encounterId), eq(s.encounters.organizationId, organizationId)));
     if (!row) return null;
-    const [minuteLines, diagnoses, claims] = await Promise.all([
+    const [minuteLines, diagnoses, claims, policies] = await Promise.all([
       tx.select().from(s.encounterMinuteLines).where(eq(s.encounterMinuteLines.encounterId, encounterId)).orderBy(s.encounterMinuteLines.cptCode, s.encounterMinuteLines.id),
       tx.select().from(s.diagnoses).where(eq(s.diagnoses.encounterId, encounterId)).orderBy(s.diagnoses.pointer),
       tx.select().from(s.claims).where(eq(s.claims.encounterId, encounterId)).orderBy(desc(s.claims.version)),
+      tx.select({ payer: s.payers }).from(s.coverages).innerJoin(s.payers, eq(s.payers.id, s.coverages.payerId))
+        .where(and(eq(s.coverages.patientId, row.patient.id), eq(s.coverages.active, true))),
     ]);
     const latest = claims[0];
     const [findings, document, packs] = await Promise.all([
@@ -89,7 +102,7 @@ export async function getOperatorEncounter(db: Database, organizationId: string,
       return pack ? `${typeof pack.definitionJson.id === "string" ? pack.definitionJson.id : "Rule pack"} v${pack.version}` : null;
     };
     return { ...row, minuteLines, diagnoses, claims, latestClaim: latest ?? null,
-      allocation: allocateUnits(minuteLines, loadMedicareMinuteLadder()), findings,
+      allocation: previewAllocation(minuteLines, policies.length === 1 ? policies[0]!.payer : undefined), findings,
       rulePacks: { active: label(false), shadow: label(true), hasShadow: packs.some((pack) => pack.status === "SHADOW") }, document };
   }, readOnly);
 }

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, gte, inArray, lte, ne } from "drizzle-orm";
-import { allocateUnits, AuthorizationSchema, ClaimLineSchema, CoverageSchema, EncounterMinuteLineSchema, EncounterSchema,
+import { allocateAmaMidpointUnits, allocateUnits, AuthorizationSchema, ClaimLineSchema, CoverageSchema, EncounterMinuteLineSchema, EncounterSchema,
   fixtureLineChargeCents, IdSchema, JsonObjectSchema, loadMedicareMinuteLadder, MoneyCentsSchema, PayerSchema,
-  PlanOfCareSchema, type Claim } from "@pt-rcm/domain";
+  PlanOfCareSchema, type Claim, type Payer, type UnitAllocationInputLine } from "@pt-rcm/domain";
 import { applyDowngrades, runRulesWithRepository, type ClaimDraft, type RuleContext } from "@pt-rcm/rules";
 import type { Database } from "./index.js";
 import { createRuleFireRepository } from "./rule-fire-repository.js";
@@ -17,6 +17,12 @@ export class EncounterScrubError extends Error {
     super(message);
     this.name = "EncounterScrubError";
   }
+}
+
+function allocateForPayer(lines: readonly UnitAllocationInputLine[], payer: Payer) {
+  return payer.payerType === "COMMERCIAL" && payer.unitRule === "AMA_MIDPOINT"
+    ? allocateAmaMidpointUnits(lines)
+    : allocateUnits(lines, loadMedicareMinuteLadder());
 }
 
 /**
@@ -51,7 +57,7 @@ export async function scrubEncounter(db: Database, organizationId: string, encou
     const minuteLines = await tx.select().from(s.encounterMinuteLines).where(eq(s.encounterMinuteLines.encounterId, encounterId))
       .orderBy(s.encounterMinuteLines.cptCode, s.encounterMinuteLines.id);
     const diagnoses = await tx.select().from(s.diagnoses).where(eq(s.diagnoses.encounterId, encounterId)).orderBy(s.diagnoses.pointer);
-    const allocatedUnits = allocateUnits(minuteLines, loadMedicareMinuteLadder());
+    const allocatedUnits = allocateForPayer(minuteLines, payer);
     const sourceFingerprint = encounterSourceFingerprint(encounter, coverage, minuteLines, diagnoses);
     if (latest && typeof latest.snapshotJson.sourceFingerprint !== "string") {
       throw new EncounterScrubError(409, "DRAFT_SOURCE_UNKNOWN", "Existing draft has no source mapping; review it before scrubbing");
@@ -177,7 +183,7 @@ export async function shadowScrubEncounter(db: Database, organizationId: string,
       if (draftClaim.lines.length !== minuteLines.length || lines.length !== minuteLines.length) throw new Error("Saved line mapping is invalid");
       const coverage = CoverageSchema.parse(saved.coverage);
       const payer = PayerSchema.parse(saved.payer);
-      ctx = { encounter: sourceEncounter, minuteLines, allocatedUnits: allocateUnits(minuteLines, loadMedicareMinuteLadder()), draftClaim,
+      ctx = { encounter: sourceEncounter, minuteLines, allocatedUnits: allocateForPayer(minuteLines, payer), draftClaim,
         claimChargeCents: MoneyCentsSchema.parse(draftClaim.lines.reduce((sum, line) => sum + fixtureLineChargeCents(line.cptCode, line.units), 0)),
         coverage, payer, authorizations: AuthorizationSchema.array().parse(saved.authorizations),
         planOfCare: PlanOfCareSchema.nullable().parse(saved.planOfCare),
