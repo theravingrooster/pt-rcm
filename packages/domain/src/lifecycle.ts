@@ -9,7 +9,7 @@ const transitions: Readonly<Record<ClaimStatus, readonly ClaimStatus[]>> = {
   DENIED: ["SCRUBBED"],
   REJECTED: ["DRAFT"],
   PAID: [],
-  PATIENT_BALANCE: [],
+  PATIENT_BALANCE: ["PAID"],
   // Retained in the canonical enum for shadow evidence; no active lifecycle edges.
   SHADOWED: [],
 };

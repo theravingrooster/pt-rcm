@@ -8,6 +8,8 @@ export * from "./encounter-scrub.js";
 export * from "./claim-document.js";
 export * from "./claim-submit.js";
 export * from "./modifier-apply.js";
+export * from "./denial-correction.js";
+export * from "./patient-payment.js";
 export { ClaimLifecycleError, transitionStoredClaim } from "./claim-lifecycle.js";
 export { TaskNotFound, listTasks, completeTask } from "./tasks.js";
 export * from "./remit-post.js";

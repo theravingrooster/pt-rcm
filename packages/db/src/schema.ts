@@ -288,6 +288,17 @@ export const remitLines = pgTable("remit_lines", {
   check("remit_lines_detail_object", sql`jsonb_typeof(${t.detailJson}) = 'object'`),
 ]);
 
+/** Synthetic patient receipts; a caller-supplied ID makes retried form posts idempotent. */
+export const patientPayments = pgTable("patient_payments", {
+  id: uuid("id").primaryKey(),
+  claimId: uuid("claim_id").notNull().references(() => claims.id),
+  amountCents: integer("amount_cents").notNull(),
+  recordedAt: utcTimestamp("recorded_at").notNull().default(sql`now()`),
+}, (t) => [
+  index("patient_payments_claim_idx").on(t.claimId),
+  check("patient_payments_amount_positive", sql`${t.amountCents} > 0`),
+]);
+
 export const tasks = pgTable("tasks", {
   id: uuid("id").defaultRandom().primaryKey(),
   claimId: uuid("claim_id").notNull().references(() => claims.id),

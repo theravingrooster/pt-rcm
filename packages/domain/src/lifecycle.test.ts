@@ -9,7 +9,7 @@ const edges: [ClaimStatus, ClaimStatus][] = [
   ["SCRUBBED", "SUBMITTED"], ["SCRUBBED", "BLOCKED"],
   ["SUBMITTED", "ACCEPTED"], ["SUBMITTED", "REJECTED"],
   ["ACCEPTED", "PAID"], ["ACCEPTED", "DENIED"], ["ACCEPTED", "PATIENT_BALANCE"],
-  ["DENIED", "SCRUBBED"], ["REJECTED", "DRAFT"],
+  ["DENIED", "SCRUBBED"], ["REJECTED", "DRAFT"], ["PATIENT_BALANCE", "PAID"],
 ];
 
 describe("claim lifecycle", () => {

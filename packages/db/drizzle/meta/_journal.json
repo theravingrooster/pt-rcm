@@ -50,6 +50,13 @@
       "when": 1790985133327,
       "tag": "0006_pink_cyclops",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791040594055,
+      "tag": "0007_wealthy_master_chief",
+      "breakpoints": true
     }
   ]
 }

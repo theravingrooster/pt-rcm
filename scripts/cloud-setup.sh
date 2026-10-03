@@ -14,11 +14,8 @@ if [ "$major" -lt 22 ]; then
   exit 1
 fi
 
-corepack enable
-corepack prepare pnpm@9.15.0 --activate
-
 # Cloud containers have no Docker daemon. Do not run docker compose or db:migrate here.
-pnpm install
-pnpm --filter @pt-rcm/domain test
+corepack pnpm install --store-dir "${TMPDIR:-/tmp}/pt-rcm-pnpm-store"
+corepack pnpm --filter @pt-rcm/domain test
 
 echo "cloud setup ok"

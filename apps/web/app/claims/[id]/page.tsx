@@ -1,8 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getOperatorClaim } from "@pt-rcm/db";
+import { getOperatorClaim, readPatientInvoice } from "@pt-rcm/db";
 import { getCarcFixture, IdSchema, RemitAdjustmentSchema, RemitPostingResultSchema } from "@pt-rcm/domain";
 import { ActionForm } from "../../_components/action-form.js";
+import { DenialCorrectionForm } from "../../_components/denial-correction-form.js";
+import { PatientInvoice } from "../../_components/patient-invoice.js";
+import { PatientPaymentForm } from "../../_components/patient-payment-form.js";
 import { Badge, ClaimJson, DataUnavailable, EmptyState, money, TableFrame } from "../../_components/operator.js";
 import { fixtureDisabledReason, loadOperatorData } from "../../_lib/server.js";
 
@@ -17,10 +20,17 @@ export default async function ClaimPage({ params }: { params: Promise<{ id: stri
   if (!result.ok) return <DataUnavailable />;
   if (!result.data) notFound();
   const { claim, encounter, patient, payer, lines, remits, remitLines, document, icn } = result.data;
+  let invoice: Awaited<ReturnType<typeof readPatientInvoice>> = null;
+  if (claim.status === "PATIENT_BALANCE" || claim.status === "PAID") {
+    const invoiceResult = await loadOperatorData((db, org) => readPatientInvoice(db, org, claim.id));
+    if (!invoiceResult.ok) return <DataUnavailable />;
+    invoice = invoiceResult.data;
+  }
+  const corrected = Array.isArray(claim.snapshotJson.submissionHistory) && claim.snapshotJson.submissionHistory.length > 0;
   return <>
     <p className="breadcrumb"><Link href="/claims">Claims</Link> / <Link href={`/encounters/${encounter.id}`}>{encounter.externalId}</Link> / Claim v{claim.version}</p>
     <div className="page-heading"><div><p className="eyebrow">Claim v{claim.version}</p><h1>{patient.firstName} {patient.lastName}</h1><p className="muted mono">{claim.id}</p></div>
-      <div className="actions"><ActionForm action="submit" endpoint={`/api/claims/${claim.id}/submit`} label="Submit claim (fixture)" primary disabledReason={fixtureDisabledReason() ?? (claim.status === "SCRUBBED" ? undefined : "A SCRUBBED claim is required.")} />
+      <div className="actions"><ActionForm action="submit" endpoint={`/api/claims/${claim.id}/submit`} label={corrected ? "Resubmit claim (fixture)" : "Submit claim (fixture)"} primary disabledReason={fixtureDisabledReason() ?? (claim.status === "SCRUBBED" ? undefined : "A SCRUBBED claim is required.")} />
         <ActionForm action="poll" endpoint="/api/remits/poll" label="Poll remits (fixture)" disabledReason={fixtureDisabledReason()} /></div>
     </div>
     <dl className="facts"><div><dt>Status</dt><dd><Badge value={claim.status} /></dd></div><div><dt>Date of service</dt><dd>{encounter.dateOfService}</dd></div><div><dt>Payer</dt><dd>{payer.name}</dd></div>
@@ -30,6 +40,14 @@ export default async function ClaimPage({ params }: { params: Promise<{ id: stri
         <tbody>{lines.map((line) => <tr key={line.id}><td className="mono">{line.cptCode}</td><td className="mono">{line.modifiers.join(", ") || "—"}</td><td className="number">{line.units}</td><td className="number">{line.minutes}</td><td>{line.diagnosisPointers.join(", ")}</td><td className="number">{money(line.chargeCents)}</td></tr>)}</tbody></table></TableFrame>
         : <EmptyState>No billable claim lines. Review the encounter findings.</EmptyState>}
     </section>
+    {claim.status === "DENIED" ? <section className="panel"><div className="section-heading"><h2>Correct denied claim</h2><span className="muted">Operator edits · active re-scrub before resubmission</span></div>
+      <p className="inline-note">Edit the recorded units or modifiers, then re-scrub. A blocked finding prevents fixture resubmission. CPT codes and service minutes stay fixed.</p>
+      <DenialCorrectionForm claimId={claim.id} lines={lines} />
+    </section> : null}
+    {invoice ? <section className="panel"><div className="section-heading"><h2>Patient invoice</h2><Link href={`/claims/${claim.id}/invoice`}>Printable invoice</Link></div>
+      <PatientInvoice invoice={invoice} />
+      {claim.status === "PATIENT_BALANCE" && invoice.remainingCents > 0 ? <div className="payment-entry"><PatientPaymentForm claimId={claim.id} remainingCents={invoice.remainingCents} /></div> : null}
+    </section> : null}
     <section className="panel"><div className="section-heading"><h2>Remittances</h2><span className="muted">Posted amounts; adjustments exclude patient responsibility</span></div>
       {remits.length ? remits.map((remit) => {
         const posting = RemitPostingResultSchema.safeParse(remit.detailJson.result);
@@ -41,7 +59,9 @@ export default async function ClaimPage({ params }: { params: Promise<{ id: stri
             <tbody>{matchedLines.map(({ remitLine, claimLine }) => {
               const adjustments = RemitAdjustmentSchema.array().safeParse(remitLine.detailJson.adjustments);
               const codes = adjustments.success && adjustments.data.length ? adjustments.data : remitLine.carc ? [{ carc: remitLine.carc, amountCents: null }] : [];
-              return <tr key={remitLine.id}><td className="mono">{claimLine.cptCode}<span className="subtext">{claimLine.units} units</span></td><td className="number">{money(remitLine.paidCents)}</td><td className="number">{money(remitLine.adjustmentCents)}</td><td className="number">{money(remitLine.contractualWriteOffCents)}</td><td className="number">{money(remitLine.patientResponsibilityCents)}</td>
+              const receiptCode = typeof remitLine.detailJson.cptCode === "string" ? remitLine.detailJson.cptCode : claimLine.cptCode;
+              const receiptUnits = typeof remitLine.detailJson.units === "number" ? remitLine.detailJson.units : claimLine.units;
+              return <tr key={remitLine.id}><td className="mono">{receiptCode}<span className="subtext">{receiptUnits} units</span></td><td className="number">{money(remitLine.paidCents)}</td><td className="number">{money(remitLine.adjustmentCents)}</td><td className="number">{money(remitLine.contractualWriteOffCents)}</td><td className="number">{money(remitLine.patientResponsibilityCents)}</td>
                 <td className="carc-cell">{codes.length ? codes.map((adjustment, index) => <div key={index}><strong className="mono">{adjustment.carc}{adjustment.amountCents !== null ? ` · ${money(adjustment.amountCents)}` : ""}</strong><span className="subtext">{getCarcFixture(adjustment.carc)?.meaning ?? "No plain-English description in the local CARC fixture."}</span></div>) : <span className="muted">No adjustment code</span>}</td><td>{remitLine.rarc ?? "—"}</td></tr>;
             })}</tbody></table></TableFrame> : <EmptyState>REMIT_UNMATCHED: no service lines were matched. Review the open remit task; the original receipt is retained.</EmptyState>}
         </article>;
