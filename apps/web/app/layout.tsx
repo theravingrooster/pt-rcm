@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { NavLink } from "./_components/nav-link.js";
 import "./globals.css";
 
 export const metadata = {
@@ -24,8 +25,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <aside className="app-rail" aria-label="Workspace navigation">
         <div className="rail-brand"><Link href="/">PT RCM</Link><span>Operator console</span></div>
         <div className="org-switcher"><span className="rail-label">Organization</span><strong>SYN Ortho PT</strong><span className="org-caption">Synthetic fixture</span></div>
-        <nav aria-label="Operations"><h2 className="rail-label">Operations</h2>{operations.map(([label, href]) => <Link key={href} href={href}>{label}</Link>)}</nav>
-        <nav aria-label="Configuration"><h2 className="rail-label">Configuration</h2>{configuration.map(([label, href]) => <Link key={href} href={href}>{label}</Link>)}</nav>
+        <nav aria-label="Operations"><h2 className="rail-label">Operations</h2>{operations.map(([label, href]) => <NavLink key={href} href={href}>{label}</NavLink>)}</nav>
+        <nav aria-label="Configuration"><h2 className="rail-label">Configuration</h2>{configuration.map(([label, href]) => <NavLink key={href} href={href}>{label}</NavLink>)}</nav>
         <div className="rail-footer">Fixture environment</div>
       </aside>
       <div className="app-workspace"><header className="workspace-header"><span>Revenue cycle / SYN Ortho PT</span><span className="workspace-environment">Fixture</span></header>
