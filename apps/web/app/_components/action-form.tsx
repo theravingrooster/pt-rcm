@@ -3,7 +3,7 @@
 import { useRef, useState, useTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
-type Action = "scrub" | "shadow" | "submit" | "poll" | "done" | "modifier";
+type Action = "scrub" | "shadow" | "submit" | "poll" | "done" | "modifier" | "eligibility";
 type Props = { action: Action; endpoint: string; label: string; disabledReason?: string; primary?: boolean };
 
 export function ActionForm({ action, endpoint, label, disabledReason, primary = false }: Props) {
@@ -35,6 +35,7 @@ export function ActionForm({ action, endpoint, label, disabledReason, primary = 
       }
       if (action === "submit") text = `Submitted via fixture. ICN: ${data.icn}.`;
       if (action === "modifier") text = `Modifier 59 applied; claim ${data.status ?? "re-scrubbed"}.`;
+      if (action === "eligibility") text = `Fixture eligibility checked: ${data.eligible ? "eligible" : "ineligible"}; plan ${data.planActive ? "active" : "inactive"}.`;
       if (action === "poll") {
         const results = data.results as { duplicate: boolean; matched: boolean; flags: unknown[] }[];
         text = `${results.filter((row) => !row.duplicate).length} new remits; ${results.filter((row) => row.duplicate).length} already posted; ${results.filter((row) => !row.matched).length} unmatched; ${results.reduce((sum, row) => sum + row.flags.length, 0)} flags.`;

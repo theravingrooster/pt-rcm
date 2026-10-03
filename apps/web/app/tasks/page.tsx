@@ -12,7 +12,7 @@ export default async function TasksPage() {
   const result = await loadOperatorData(listOperatorTasks);
   if (!result.ok) return <DataUnavailable />;
   return <>
-    <div className="page-heading"><div><p className="eyebrow">Work queue</p><h1>Open tasks <span className="count">{result.data.length}</span></h1><p className="muted">Completing a task records an audit event.</p></div><Link href="/">Back to encounters</Link></div>
+    <div className="page-heading"><div><p className="eyebrow">Operations / Tasks</p><h1>Open tasks <span className="count">{result.data.length}</span></h1><p className="muted">Completing a task records an audit event.</p></div><Link href="/queues">Encounter queue</Link></div>
     <section className="panel">{result.data.length ? <TableFrame label="Open tasks"><table><thead><tr><th scope="col">Task / reason</th><th scope="col">Patient / DOS</th><th scope="col">Claim</th><th scope="col">Owner</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead>
       <tbody>{result.data.map(({ task, claim, encounter, patient }) => <tr key={task.id}><td><strong className="mono">{task.kind}</strong><span className="subtext task-reason">{task.reason}</span></td>
         <td><Link href={`/encounters/${encounter.id}`}>{patient.firstName} {patient.lastName}</Link><span className="subtext">{encounter.dateOfService}</span></td>

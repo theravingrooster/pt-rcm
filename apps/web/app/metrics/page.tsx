@@ -5,7 +5,7 @@ import { loadOperatorData } from "../_lib/server.js";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const metadata = { title: "Metrics" };
+export const metadata = { title: "Reports" };
 
 const percent = (value: number | null) => value === null ? "—" : new Intl.NumberFormat("en-US", {
   style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1,
@@ -16,7 +16,7 @@ export default async function MetricsPage() {
   if (!result.ok) return <DataUnavailable />;
   const m = result.data;
   return <>
-    <div className="page-heading"><div><p className="eyebrow">Synthetic operations</p><h1>Metrics</h1>
+    <div className="page-heading"><div><p className="eyebrow">Operations / Reports</p><h1>Reports</h1>
       <p className="muted">Latest claim per encounter. Amounts use the local fixture fee schedule.</p></div></div>
     <section className="panel"><div className="section-heading"><h2>Claim and collection measures</h2><span className="muted">{m.claimCount} claims · {m.scrubbedEncounterCount} scrubbed encounters</span></div>
       {m.claimCount ? <TableFrame label="Operator metrics"><table><thead><tr><th scope="col">Measure</th><th scope="col" className="number">Value</th><th scope="col">Calculation</th></tr></thead>

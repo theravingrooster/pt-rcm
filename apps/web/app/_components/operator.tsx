@@ -16,7 +16,7 @@ export function EmptyState({ children }: { children: ReactNode }) {
 export function DataUnavailable() {
   return <section className="empty-state" role="alert"><h1>Operator data is unavailable</h1>
     <p>Check the database connection and run <code>pnpm db:migrate</code> and <code>pnpm db:seed</code>.</p>
-    <p>Then run <code>pnpm seed:demo</code> with <code>pnpm dev</code> running.</p><Link href="/">Reload encounters</Link></section>;
+    <p>Then run <code>pnpm seed:demo</code> with <code>pnpm dev</code> running.</p><Link href="/queues">Reload queue</Link></section>;
 }
 
 export function TableFrame({ label, children }: { label: string; children: ReactNode }) {

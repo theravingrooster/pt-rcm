@@ -15,6 +15,8 @@ pnpm demo
 pnpm dev
 ```
 
+`apps/web` can be deployed to Vercel with `DATABASE_URL` and `CLEARINGHOUSE_ADAPTER=fixture`. Do not set live payer credentials.
+
 ## What this does not do
 
 - Live 837 submission

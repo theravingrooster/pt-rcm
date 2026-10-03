@@ -18,7 +18,7 @@ export default async function ClaimPage({ params }: { params: Promise<{ id: stri
   if (!result.data) notFound();
   const { claim, encounter, patient, payer, lines, remits, remitLines, document, icn } = result.data;
   return <>
-    <p className="breadcrumb"><Link href="/">Encounters</Link> / <Link href={`/encounters/${encounter.id}`}>{encounter.externalId}</Link> / Claim v{claim.version}</p>
+    <p className="breadcrumb"><Link href="/claims">Claims</Link> / <Link href={`/encounters/${encounter.id}`}>{encounter.externalId}</Link> / Claim v{claim.version}</p>
     <div className="page-heading"><div><p className="eyebrow">Claim v{claim.version}</p><h1>{patient.firstName} {patient.lastName}</h1><p className="muted mono">{claim.id}</p></div>
       <div className="actions"><ActionForm action="submit" endpoint={`/api/claims/${claim.id}/submit`} label="Submit claim (fixture)" primary disabledReason={fixtureDisabledReason() ?? (claim.status === "SCRUBBED" ? undefined : "A SCRUBBED claim is required.")} />
         <ActionForm action="poll" endpoint="/api/remits/poll" label="Poll remits (fixture)" disabledReason={fixtureDisabledReason()} /></div>

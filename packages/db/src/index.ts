@@ -15,6 +15,10 @@ export * from "./remit-poll.js";
 export * from "./coverage-eligibility.js";
 export * from "./operator-read.js";
 export * from "./metrics-read.js";
+export * from "./claims-console-read.js";
+export * from "./config-console-read.js";
+export * from "./people-remits-read.js";
+export * from "./rules-console-read.js";
 export * from "./rule-fire-repository.js";
 export * from "./rule-packs.js";
 

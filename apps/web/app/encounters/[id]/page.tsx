@@ -40,7 +40,7 @@ export default async function EncounterPage({ params }: { params: Promise<{ id: 
     </>;
   };
   return <>
-    <p className="breadcrumb"><Link href="/">Encounters</Link> / <span>{encounter.externalId}</span></p>
+    <p className="breadcrumb"><Link href="/queues">Queues</Link> / <span>{encounter.externalId}</span></p>
     <div className="page-heading"><div><p className="eyebrow">Encounter</p><h1>{patient.firstName} {patient.lastName}</h1><p className="muted mono">{encounter.externalId}</p></div>
       <div className="actions"><ActionForm action="scrub" endpoint={`/api/encounters/${encounter.id}/scrub`} label="Scrub encounter" primary disabledReason={canScrub ? undefined : `Scrub unavailable while the claim is ${latestClaim!.status}.`} />
         <ActionForm action="shadow" endpoint={`/api/encounters/${encounter.id}/scrub?mode=shadow`} label="Run shadow scrub" disabledReason={!latestClaim ? "Scrub the encounter first to create a claim." : rulePacks.hasShadow ? undefined : "No shadow pack is staged."} />
