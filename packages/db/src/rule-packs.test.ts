@@ -19,7 +19,6 @@ describe.skipIf(!url)("versioned rule pack lifecycle", () => {
   afterAll(async () => { if (connection) await connection.client.end(); });
 
   it("keeps shadow evaluation nonmutating, requires claim evidence, and excludes the retired pack after an atomic promotion", async () => {
-    const rollback = new Error("SYN roll back isolated pack lifecycle");
     await expect(connection.db.transaction(async (tx) => {
       const scoped = tx as unknown as Database; // Drizzle nested transactions use savepoints.
       const input: EncounterIngestInput = { ...structuredClone(example), externalId: `SYN-PACK-${randomUUID()}`,
@@ -114,16 +113,50 @@ describe.skipIf(!url)("versioned rule pack lifecycle", () => {
         expect.objectContaining({ ruleId: "coverage-inactive", outcome: "FLAG", code: "ELIGIBILITY_STALE" }),
       ]));
       expect((await tx.select().from(s.ruleFires).where(and(eq(s.ruleFires.claimId, active.claimId), eq(s.ruleFires.ruleSetId, v2.id))))).toHaveLength(0);
-      // PGlite can lose visibility of earlier rows after rolling back a
-      // constraint failure in a nested savepoint. Check immutability last so
-      // the preceding lifecycle assertions still exercise the same rows.
-      await expect(tx.transaction((nested) => nested.update(s.ruleSets).set({ notes: "SYN attempted rewrite" }).where(eq(s.ruleSets.id, v1.id))))
+      // The expected constraint error ends this outer transaction, rolling
+      // the temporary promotion back without a nested savepoint in PGlite.
+      await tx.update(s.ruleSets).set({ notes: "SYN attempted rewrite" }).where(eq(s.ruleSets.id, v1.id));
+    })).rejects.toMatchObject({ code: "23514" });
+    // The rejecting connection can retain an aborted state in PGlite. Verify
+    // the rollback from a new connection so the test checks persisted state.
+    const verification = createDatabase(url!);
+    try {
+      expect((await currentRulePack(verification.db, "ACTIVE")).row.version).toBe("1");
+      expect((await currentRulePack(verification.db, "SHADOW")).row.version).toBe("3");
+    } finally { await verification.client.end(); }
+  });
+
+  it("rejects edits to the active pack", async () => {
+    const isolated = createDatabase(url!);
+    try {
+      const [active] = await isolated.db.select().from(s.ruleSets).where(eq(s.ruleSets.status, "ACTIVE"));
+      await expect(isolated.db.update(s.ruleSets).set({ notes: "SYN attempted rewrite" }).where(eq(s.ruleSets.id, active!.id)))
         .rejects.toMatchObject({ code: "23514" });
-      await expect(tx.transaction((nested) => nested.update(s.ruleSets).set({ status: "DRAFT" }).where(eq(s.ruleSets.id, v3.id))))
-        .rejects.toMatchObject({ code: "23514" });
-      await expect(tx.transaction((nested) => nested.update(s.ruleSets).set({ definitionJson: v1.definitionJson }).where(eq(s.ruleSets.id, v3.id))))
-        .rejects.toMatchObject({ code: "23514" });
-      throw rollback;
-    })).rejects.toBe(rollback);
+    } finally { await isolated.client.end(); }
+  });
+
+  it.each(["status", "definition"] as const)("rejects %s changes to a tested shadow pack", async (change) => {
+    const isolated = createDatabase(url!);
+    let shadowId: string;
+    try {
+      const packs = await isolated.db.select().from(s.ruleSets);
+      const v1 = packs.find((pack) => pack.version === "1")!;
+      const v3 = packs.find((pack) => pack.version === "3")!;
+      shadowId = v3.id;
+      await expect(isolated.db.transaction(async (tx) => {
+        const scoped = tx as unknown as Database;
+        const input: EncounterIngestInput = { ...structuredClone(example), externalId: `SYN-IMMUTABLE-${randomUUID()}`,
+          patient: { ...structuredClone(example.patient), externalId: `SYN-IMMUTABLE-PAT-${randomUUID()}` } };
+        const { encounterId } = await upsertEncounter(scoped, seedOrganization.id, input);
+        await scrubEncounter(scoped, seedOrganization.id, encounterId);
+        await shadowScrubEncounter(scoped, seedOrganization.id, encounterId);
+        await tx.update(s.ruleSets).set(change === "status" ? { status: "DRAFT" } : { definitionJson: v1.definitionJson })
+          .where(eq(s.ruleSets.id, v3.id));
+      })).rejects.toMatchObject({ code: "23514" });
+    } finally { await isolated.client.end(); }
+    const verification = createDatabase(url!);
+    try {
+      expect((await verification.db.select().from(s.ruleSets).where(eq(s.ruleSets.id, shadowId)))[0]!.status).toBe("SHADOW");
+    } finally { await verification.client.end(); }
   });
 });
