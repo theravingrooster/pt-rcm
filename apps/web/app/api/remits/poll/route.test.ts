@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { FixtureClearinghouse } from "@pt-rcm/clearinghouse";
+import { FixtureClearinghouse, renderFixture835 } from "@pt-rcm/clearinghouse";
 import { RemitNotPostable } from "@pt-rcm/domain";
 import { loadFixtureRemitScripts, pollRemits, RemitPostingError } from "@pt-rcm/db";
 import { POST } from "./route.js";
@@ -22,6 +22,22 @@ describe("POST /api/remits/poll", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(loadFixtureRemitScripts).toHaveBeenCalledWith({}, organizationId);
     expect(pollRemits).toHaveBeenCalledWith({}, organizationId, query ? query.slice(7) : "1970-01-01", { adapter: "fixture", clearinghouse: expect.any(FixtureClearinghouse) });
+  });
+  it("passes parsed 835 text to remit polling and rejects a JSON remit source", async () => {
+    const script = { claimId: "00000000-0000-4000-8000-000000000101", claimVersion: 1,
+      totalChargeCents: 10000, receivedOn: "2026-10-02", lines: [{ cptCode: "97110", units: 2, chargeCents: 10000 }] };
+    let parsed: Awaited<ReturnType<FixtureClearinghouse["fetchRemits"]>> = [];
+    vi.mocked(pollRemits).mockImplementation(async (_db, _org, since, options) => {
+      parsed = await options.clearinghouse.fetchRemits(since);
+      return { results: [] };
+    });
+    vi.mocked(loadFixtureRemitScripts).mockResolvedValue([renderFixture835(script)] as never);
+    expect((await POST(request())).status).toBe(200);
+    expect(parsed).toMatchObject([{ claimId: script.claimId, paidCents: 8000,
+      patientResponsibilityCents: 2000, adjustments: [{ carc: "PR-2", amountCents: 2000 }] }]);
+
+    vi.mocked(loadFixtureRemitScripts).mockResolvedValue([JSON.stringify(parsed[0])] as never);
+    expect((await POST(request())).status).toBe(500);
   });
   it.each([undefined, "", "stedi", "Fixture"])("refuses adapter %s before database access or fixture calls", async (adapter) => {
     vi.stubEnv("CLEARINGHOUSE_ADAPTER", adapter);

@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
-import { ClaimDocumentLineSchema, ClaimDocumentSchema, IdSchema, IsoDateSchema, MoneyCentsSchema, NonNegativeIntSchema, UtcTimestampSchema, type ClaimDocument, type RemitEnvelope } from "@pt-rcm/domain";
+import { ClaimDocumentSchema, IsoDateSchema, UtcTimestampSchema, type ClaimDocument, type RemitEnvelope } from "@pt-rcm/domain";
+import { parseSynthetic835, renderFixture835 } from "./x12/parse835.js";
 
 export * from "./x12/map837p.js";
+export { parseSynthetic835, renderFixture835 } from "./x12/parse835.js";
 export type { RemitEnvelope } from "@pt-rcm/domain";
 
 export type EligibilityRequest = { memberId: string };
@@ -27,19 +28,18 @@ export type ClearinghouseCall =
 export type FixtureRemitScript = {
   claimId: string; claimVersion?: number; totalChargeCents: number; receivedOn: string;
   lines?: Pick<ClaimDocument["lines"][number], "cptCode" | "units" | "chargeCents">[];
+  outcome?: "COINSURANCE" | "PAID" | "DENIED";
 };
 
 export class FixtureClearinghouse implements ClearinghousePort {
   readonly calls: ClearinghouseCall[] = [];
-  private readonly remitScripts: FixtureRemitScript[];
+  private readonly remitTexts: string[];
 
-  constructor(remitScript?: FixtureRemitScript | FixtureRemitScript[]) {
-    this.remitScripts = (Array.isArray(remitScript) ? remitScript : remitScript ? [remitScript] : []).map((script) => {
-      const lines = script.lines?.map((line) => ClaimDocumentLineSchema.pick({ cptCode: true, units: true, chargeCents: true }).parse(line));
-      if (lines && lines.reduce((sum, line) => sum + line.chargeCents, 0) !== script.totalChargeCents) throw new Error("Fixture line charges must equal the claim charge");
-      return { claimId: IdSchema.parse(script.claimId), claimVersion: NonNegativeIntSchema.min(1).parse(script.claimVersion ?? 1),
-        totalChargeCents: MoneyCentsSchema.parse(script.totalChargeCents), receivedOn: IsoDateSchema.parse(script.receivedOn), lines };
-    });
+  constructor(remitScript?: FixtureRemitScript | string | (FixtureRemitScript | string)[]) {
+    // Submitted claim metadata is rendered to 835-shaped text immediately.
+    // Raw text fixtures take the same parser path; JSON never enters posting.
+    this.remitTexts = (Array.isArray(remitScript) ? remitScript : remitScript ? [remitScript] : [])
+      .map((script) => typeof script === "string" ? script : renderFixture835(script));
   }
 
   async checkEligibility(request: EligibilityRequest): Promise<EligibilityResult> {
@@ -57,31 +57,8 @@ export class FixtureClearinghouse implements ClearinghousePort {
   async fetchRemits(since: string): Promise<RemitEnvelope[]> {
     this.calls.push({ method: "fetchRemits", since });
     const start = IsoDateSchema.or(UtcTimestampSchema).parse(since);
-    return this.remitScripts.filter((script) => Date.parse(`${script.receivedOn}T00:00:00.000Z`) >= Date.parse(start)).map((script) => {
-      // Round the payer's 80% to the nearest cent using integer arithmetic, then
-      // assign the remaining cents to coinsurance so the two portions always sum.
-      const paidCents = Math.floor((script.totalChargeCents * 80 + 50) / 100);
-      const patientResponsibilityCents = script.totalChargeCents - paidCents;
-      // Stable identity across polls/process restarts, distinct after a denial revision.
-      const hash = createHash("sha256").update(`SYN-REMIT:${script.claimId}:${script.claimVersion}`).digest("hex");
-      const id = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
-      let cumulativeCharge = 0;
-      let cumulativePaid = 0;
-      const lines = (script.lines ?? []).map((line) => {
-        cumulativeCharge += line.chargeCents;
-        const nextPaid = Math.floor((cumulativeCharge * 80 + 50) / 100);
-        const paid = nextPaid - cumulativePaid;
-        cumulativePaid = nextPaid;
-        const responsibility = line.chargeCents - paid;
-        return { cptCode: line.cptCode, units: line.units, paidCents: paid, patientResponsibilityCents: responsibility,
-          adjustments: [{ carc: "PR-2", amountCents: responsibility }], rarc: null };
-      });
-      return {
-        id, lines,
-        claimId: script.claimId, payerIcn: `SYN-ICN-${script.claimId}`, paidCents, patientResponsibilityCents,
-        carc: "PR-2", adjustments: [{ carc: "PR-2", amountCents: patientResponsibilityCents }], receivedOn: script.receivedOn,
-      };
-    });
+    return this.remitTexts.map(parseSynthetic835)
+      .filter((remit) => Date.parse(`${remit.receivedOn}T00:00:00.000Z`) >= Date.parse(start));
   }
 }
 

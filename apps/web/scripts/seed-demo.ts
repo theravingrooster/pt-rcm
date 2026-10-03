@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { FixtureClearinghouse } from "@pt-rcm/clearinghouse";
-import { ClaimDocumentSchema, EncounterIngestSchema, type RemitEnvelope } from "@pt-rcm/domain";
+import { FixtureClearinghouse, parseSynthetic835, renderFixture835 } from "@pt-rcm/clearinghouse";
+import { ClaimDocumentSchema, EncounterIngestSchema } from "@pt-rcm/domain";
 import { createDatabase, DEFAULT_INGEST_ORGANIZATION_ID, loadFixtureRemitScripts, pollRemits,
   postRemit, scrubEncounter, submitScrubbedClaim, upsertEncounter } from "@pt-rcm/db";
 
@@ -22,12 +21,6 @@ async function syntheticEncounter(externalId: string, patientExternalId: string,
   fixture.patient.name.lastName = patientName;
   fixture.patient.coverage.memberId = `SYN-MEMBER-${patientExternalId}`;
   return EncounterIngestSchema.parse(fixture);
-}
-
-// A distinct, repeatable receipt ID prevents a resumed seed from double-posting.
-function denialRemitId(claimId: string, version: number) {
-  const hash = createHash("sha256").update(`SYN-DEMO-DENIAL:${claimId}:${version}`).digest("hex");
-  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 }
 
 const connection = createDatabase(process.env.DATABASE_URL ?? "postgres://pt:pt@localhost:5432/pt_rcm");
@@ -111,18 +104,14 @@ try {
           if (!saved) throw new Error("Synthetic denial claim disappeared before remit posting");
           const submission = saved?.snapshot_json?.submission;
           const document = ClaimDocumentSchema.parse(submission?.document);
-          const envelope: RemitEnvelope = {
-            id: denialRemitId(claimId, Number(saved.version)), claimId,
-            payerIcn: `SYN-ICN-${claimId}`, receivedOn: new Date().toISOString().slice(0, 10),
-            paidCents: 0, patientResponsibilityCents: 0, carc: "CO-16",
-            adjustments: [{ carc: "CO-16", amountCents: document.totalChargeCents }],
-            lines: document.lines.map((line) => ({ cptCode: line.cptCode, units: line.units,
-              paidCents: 0, patientResponsibilityCents: 0,
-              adjustments: [{ carc: "CO-16", amountCents: line.chargeCents }], rarc: null })),
-          };
-          // A crafted local denial is a recorded receipt. The 80/20 fixture
-          // poller must not synthesize a later payment for this denied claim.
-          status = (await postRemit(connection.db, organizationId, envelope)).status;
+          const text = renderFixture835({ claimId, claimVersion: Number(saved.version),
+            totalChargeCents: document.totalChargeCents, receivedOn: new Date().toISOString().slice(0, 10),
+            outcome: "DENIED", lines: document.lines.map((line) => ({ cptCode: line.cptCode,
+              units: line.units, chargeCents: line.chargeCents })),
+          });
+          // The synthetic denial is parsed from the same text format as fixture
+          // polling. Polling excludes claims once their receipt is posted.
+          status = (await postRemit(connection.db, organizationId, parseSynthetic835(text))).status;
         } else {
           const script = (await loadFixtureRemitScripts(connection.db, organizationId))
             .find((candidate) => candidate.claimId === claimId);
