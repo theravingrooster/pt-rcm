@@ -37,6 +37,35 @@ export const gpModifierRule: Rule = Object.freeze<Rule>({
   },
 });
 
+/** Only an explicitly saved PTA performer on a locked timed chart line triggers CQ. */
+function isPtaChartLine(notes: string | null): boolean {
+  if (!notes) return false;
+  try {
+    const source = JSON.parse(notes) as unknown;
+    return source !== null && typeof source === "object" && !Array.isArray(source)
+      && "source" in source && source.source === "SYNTHETIC_LOCKED_PT_NOTE"
+      && "performer" in source && source.performer === "PTA";
+  } catch {
+    return false;
+  }
+}
+
+export const ptaCqModifierRule: Rule = Object.freeze<Rule>({
+  id: "pta-cq-modifier", version: 1,
+  description: "Add CQ to billed timed chart lines performed by a PTA.",
+  evaluate(ctx): RuleResult {
+    const linePatches = ctx.draftClaim.lines.flatMap((line, lineIndex) => {
+      const recorded = ctx.minuteLines[lineIndex];
+      return recorded?.timed && recorded.cptCode === line.cptCode && line.units > 0
+        && isPtaChartLine(recorded.notes) && !line.modifiers.includes("CQ")
+        ? [{ lineIndex, addModifiers: ["CQ" as const] }] : [];
+    });
+    return linePatches.length
+      ? { outcome: "DOWNGRADE", code: "MISSING_CQ", message: "Add CQ to billed timed lines performed by a PTA.", linePatches }
+      : { outcome: "PASS" };
+  },
+});
+
 export const eightMinuteAppliedRule: Rule = Object.freeze<Rule>({
   id: "eight-minute-applied", version: 1, description: "Compare submitted timed units with the payer's timed-unit allocation.",
   evaluate(ctx): RuleResult {

@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { allocateUnits, fixtureLineChargeCents, getCptFixture, loadMedicareMinuteLadder } from "@pt-rcm/domain";
 import { applyDowngrades, runRules, toRuleFireRows } from "./index.js";
-import { authVisitsRule, coverageInactiveRule, distinctProcedureRule, eightMinuteAppliedRule, evalWithTreatmentRule, gpModifierRule, kxThresholdRule, planOfCareRule, ptPack, suggestDistinctProcedure, timedCodeCapRule, zeroMinuteTimedRule } from "./ptPack.js";
+import { authVisitsRule, coverageInactiveRule, distinctProcedureRule, eightMinuteAppliedRule, evalWithTreatmentRule, gpModifierRule, kxThresholdRule, planOfCareRule, ptPack, ptaCqModifierRule, suggestDistinctProcedure, timedCodeCapRule, zeroMinuteTimedRule } from "./ptPack.js";
 import { makeContext, testClaimId } from "./testing/fixtures.js";
 import type { RuleContext } from "./types.js";
 
-type Line = { cptCode: string; minutes: number; units?: number; modifiers?: string[] };
+type Line = { cptCode: string; minutes: number; units?: number; modifiers?: string[]; notes?: string | null };
 function context(lines: Line[] = [{ cptCode: "97110", minutes: 20 }, { cptCode: "97530", minutes: 20 }]): RuleContext {
   const base = makeContext();
   const minuteLines = lines.map((line, index) => ({ id: `20000000-0000-4000-8000-${String(index).padStart(12, "0")}`, encounterId: base.encounter.id,
-    cptCode: line.cptCode, minutes: line.minutes, timed: getCptFixture(line.cptCode)!.timed, notes: null }));
+    cptCode: line.cptCode, minutes: line.minutes, timed: getCptFixture(line.cptCode)!.timed, notes: line.notes ?? null }));
   const allocatedUnits = allocateUnits(minuteLines, loadMedicareMinuteLadder());
   const draftClaim = { encounterId: base.encounter.id, lines: allocatedUnits.lines.map((line, index) => ({
     cptCode: line.cptCode, minutes: line.minutes, units: lines[index]!.units ?? line.units,
@@ -61,6 +61,70 @@ describe("gp-modifier", () => {
   it.each(["KX", "59", "GO", "GN"])("runtime rejects an automatic %s addition", (modifier) => {
     const unsafe = { ...gpModifierRule, evaluate: () => ({ outcome: "DOWNGRADE", code: "UNSAFE", message: "Unsafe fixture", linePatches: [{ lineIndex: 0, addModifiers: [modifier] }] }) };
     expect(runRules([unsafe as typeof gpModifierRule], context()).blocks[0]).toMatchObject({ code: "RULE_CRASH" });
+  });
+});
+
+describe("pta-cq-modifier", () => {
+  const chartNotes = (performer?: "PT" | "PTA") => JSON.stringify({
+    source: "SYNTHETIC_LOCKED_PT_NOTE", externalNoteId: "SYN-PTA-FIXTURE-NOTE",
+    startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z",
+    ...(performer ? { performer } : {}),
+  });
+
+  it("downgrades only a billed PTA timed line, preserving units and applying GP independently", () => {
+    const ctx = context([
+      { cptCode: "97110", minutes: 20, notes: chartNotes("PTA") },
+      { cptCode: "97530", minutes: 20, notes: chartNotes("PT") },
+    ]);
+    const before = structuredClone(ctx);
+    const run = runRules([ptaCqModifierRule, gpModifierRule], ctx);
+    expect(run.submissionAllowed).toBe(true);
+    expect(run.downgrades).toMatchObject([
+      { ruleId: "gp-modifier", code: "MISSING_GP", linePatches: [
+        { lineIndex: 0, addModifiers: ["GP"] }, { lineIndex: 1, addModifiers: ["GP"] },
+      ] },
+      { ruleId: "pta-cq-modifier", code: "MISSING_CQ", linePatches: [{ lineIndex: 0, addModifiers: ["CQ"] }] },
+    ]);
+    const applied = applyDowngrades(ctx.draftClaim, run.downgrades);
+    expect(applied.lines.map(({ units, modifiers }) => ({ units, modifiers }))).toEqual([
+      { units: 2, modifiers: ["GP", "CQ"] }, { units: 1, modifiers: ["GP"] },
+    ]);
+    expect(ptaCqModifierRule.evaluate({ ...ctx, draftClaim: applied })).toEqual({ outcome: "PASS" });
+    expect(ctx).toEqual(before);
+  });
+
+  it.each([
+    { label: "missing performer defaults PT", notes: chartNotes() },
+    { label: "explicit PT", notes: chartNotes("PT") },
+    { label: "ordinary encounter line", notes: null },
+    { label: "untrusted metadata", notes: '{"performer":"PTA"}' },
+  ])("does not add CQ to $label", ({ notes }) => {
+    expect(ptaCqModifierRule.evaluate(context([{ cptCode: "97110", minutes: 20, notes }]))).toEqual({ outcome: "PASS" });
+  });
+
+  it("does not add CQ to an untimed eval even when metadata says PTA", () => {
+    const ctx = context([{ cptCode: "97161", minutes: 0, notes: chartNotes("PTA") }]);
+    expect(ctx.draftClaim.lines[0]!.units).toBe(1);
+    expect(ptaCqModifierRule.evaluate(ctx)).toEqual({ outcome: "PASS" });
+  });
+
+  it("does not bill a zero-unit PTA timed line", () => {
+    const ctx = context([{ cptCode: "97110", minutes: 0, notes: chartNotes("PTA") }]);
+    expect(ctx.draftClaim.lines[0]!.units).toBe(0);
+    expect(ptaCqModifierRule.evaluate(ctx)).toEqual({ outcome: "PASS" });
+  });
+
+  it("applies CQ after overlap minutes are credited without changing the 30-minute allocation", () => {
+    const ctx = context([
+      { cptCode: "97110", minutes: 20, notes: chartNotes("PTA") },
+      { cptCode: "97140", minutes: 10, notes: chartNotes("PT") },
+    ]);
+    expect(ctx.allocatedUnits.totalTimedMinutes).toBe(30);
+    expect(ctx.allocatedUnits.totalUnits).toBe(2);
+    const run = runRules([ptaCqModifierRule, eightMinuteAppliedRule], ctx);
+    expect(run.blocks).toEqual([]);
+    expect(applyDowngrades(ctx.draftClaim, run.downgrades).lines.map(({ units, modifiers }) => ({ units, modifiers })))
+      .toEqual([{ units: 1, modifiers: ["CQ"] }, { units: 1, modifiers: [] }]);
   });
 });
 

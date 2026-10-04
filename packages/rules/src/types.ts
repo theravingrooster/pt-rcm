@@ -25,13 +25,13 @@ export type RuleContext = DeepReadonly<{
 }>;
 
 // Indexes refer to the stable allocation/draft line order, including zero-unit lines.
-// GP is the only automatic modifier addition supported by this version.
+// GP and CQ are the only automatic modifier additions supported by these rules.
 // Strict validation still forbids adding minutes, codes, diagnoses, or services.
 export const LinePatchSchema = z.object({
   lineIndex: NonNegativeIntSchema,
   units: NonNegativeIntSchema.optional(),
-  addModifiers: z.array(z.literal("GP")).min(1).optional(),
-}).strict().refine((patch) => patch.units !== undefined || patch.addModifiers !== undefined, "Patch must change units or add GP");
+  addModifiers: z.array(z.enum(["GP", "CQ"])).min(1).optional(),
+}).strict().refine((patch) => patch.units !== undefined || patch.addModifiers !== undefined, "Patch must change units or add GP/CQ");
 export type LinePatch = z.infer<typeof LinePatchSchema>;
 
 const explanation = { code: z.string().trim().min(1), message: z.string().trim().min(1), detail: JsonObjectSchema.optional() };

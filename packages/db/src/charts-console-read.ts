@@ -26,7 +26,9 @@ export function chartTimingForLine(notes: string | null, noteId: string, billabl
       if (rawMinutes !== billableMinutes) return null;
     } else if (data.rawMinutes !== rawMinutes || data.billableMinutes !== billableMinutes
       || data.overlapMinutes !== rawMinutes - billableMinutes || rawMinutes < billableMinutes) return null;
-    return { startTime: data.startTime, stopTime: data.stopTime, rawMinutes };
+    if (data.performer !== undefined && data.performer !== "PT" && data.performer !== "PTA") return null;
+    return { startTime: data.startTime, stopTime: data.stopTime, rawMinutes,
+      performer: data.performer === "PTA" ? "PTA" as const : "PT" as const };
   } catch {
     return null;
   }
@@ -49,7 +51,8 @@ function chartEntries<T extends { notes: string | null; minutes: number; timed: 
   return lines.map((line) => {
     const untimed = chartUntimedForLine(line.notes, noteId, line.minutes, line.timed);
     const timing = line.timed ? chartTimingForLine(line.notes, noteId, line.minutes) : null;
-    return { ...line, untimed, timing, rawMinutes: line.timed ? timing?.rawMinutes ?? line.minutes : 0,
+    return { ...line, untimed, timing, performer: line.timed ? timing?.performer ?? null : null,
+      rawMinutes: line.timed ? timing?.rawMinutes ?? line.minutes : 0,
       billableMinutes: line.timed ? line.minutes : 0 };
   });
 }

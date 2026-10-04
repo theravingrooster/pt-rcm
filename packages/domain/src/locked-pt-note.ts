@@ -26,6 +26,7 @@ export const LockedPtNoteSchema = z.object({
     cptCode: z.string(),
     startTime: ChartTimestampSchema,
     stopTime: ChartTimestampSchema,
+    performer: z.enum(["PT", "PTA"]).optional(),
   }).strict()),
   untimedEntries: z.array(z.object({ cptCode: z.string() }).strict()).optional(),
 }).strict().superRefine((note, context) => {
@@ -89,6 +90,7 @@ export type LockedPtNoteIntervalAnalysis = {
     cptCode: string;
     startTime: string;
     stopTime: string;
+    performer: "PT" | "PTA";
     rawMinutes: number;
     billableMinutes: number;
   }>;
@@ -99,10 +101,11 @@ export type LockedPtNoteIntervalAnalysis = {
 
 /** Credit each one-on-one minute to the earliest interval covering it. */
 function analyzeValidatedIntervals(note: LockedPtNote): LockedPtNoteIntervalAnalysis {
-  const lines = note.timedEntries.map(({ cptCode, startTime, stopTime }) => ({
+  const lines = note.timedEntries.map(({ cptCode, startTime, stopTime, performer }) => ({
     cptCode,
     startTime,
     stopTime,
+    performer: performer ?? "PT",
     rawMinutes: (Date.parse(stopTime) - Date.parse(startTime)) / 60_000,
     billableMinutes: 0,
   }));

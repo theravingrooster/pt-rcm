@@ -7,6 +7,7 @@ import { analyzeLockedPtNoteIntervals, LockedPtNoteSchema, lockedPtNoteToEncount
 
 const shoulder = JSON.parse(readFileSync(new URL("../../../fixtures/encounters/shoulder-23min.json", import.meta.url), "utf8")) as EncounterIngestInput;
 const overlapping = JSON.parse(readFileSync(new URL("../../../fixtures/charts/overlapping-30min.json", import.meta.url), "utf8")) as typeof note;
+const pta = JSON.parse(readFileSync(new URL("../../../fixtures/charts/pta-20min.json", import.meta.url), "utf8")) as typeof note;
 const context = { patient: shoulder.patient, facilityId: shoulder.facilityId, planOfCare: shoulder.planOfCare };
 
 // CPT is AMA-licensed. These two procedure codes are from the local fixture only.
@@ -28,7 +29,8 @@ describe("locked synthetic PT note", () => {
       rawTotalMinutes: 40,
       billableUnionMinutes: 40,
       overlapMinutes: 0,
-      lines: [{ rawMinutes: 20, billableMinutes: 20 }, { rawMinutes: 20, billableMinutes: 20 }],
+      lines: [{ rawMinutes: 20, billableMinutes: 20, performer: "PT" },
+        { rawMinutes: 20, billableMinutes: 20, performer: "PT" }],
     });
     const result = lockedPtNoteToEncounterInput(note, context);
     expect(result).toMatchObject({
@@ -41,6 +43,15 @@ describe("locked synthetic PT note", () => {
     expect("units" in result.minuteLines[0]!).toBe(false);
     const allocation = allocateUnits(result.minuteLines.map((line) => ({ ...line, timed: true })), loadMedicareMinuteLadder());
     expect(allocation.totalUnits).toBe(3);
+  });
+
+  it("preserves a PTA performer without altering recorded minutes or units", () => {
+    expect(analyzeLockedPtNoteIntervals(pta)).toMatchObject({ rawTotalMinutes: 20,
+      billableUnionMinutes: 20, lines: [{ cptCode: "97110", performer: "PTA", billableMinutes: 20 }] });
+    const encounter = lockedPtNoteToEncounterInput(pta, context);
+    expect(encounter.minuteLines).toEqual([{ cptCode: "97110", minutes: 20 }]);
+    expect(allocateUnits(encounter.minuteLines.map((line) => ({ ...line, timed: true })),
+      loadMedicareMinuteLadder()).totalUnits).toBe(1);
   });
 
   it("credits only the 30-minute union of overlapping intervals to encounter lines and the allocator", () => {
@@ -129,6 +140,8 @@ describe("locked synthetic PT note", () => {
   it("rejects timed CPTs in untimed entries and caller-supplied minutes", () => {
     expect(LockedPtNoteSchema.safeParse({ ...note, untimedEntries: [{ cptCode: "97110" }] }).success).toBe(false);
     expect(LockedPtNoteSchema.safeParse({ ...note, untimedEntries: [{ cptCode: "97161", minutes: 20 }] }).success).toBe(false);
+    expect(LockedPtNoteSchema.safeParse({ ...note, untimedEntries: [{ cptCode: "97161", performer: "PTA" }] }).success).toBe(false);
+    expect(LockedPtNoteSchema.safeParse({ ...note, timedEntries: [{ ...note.timedEntries[0], performer: "OTHER" }] }).success).toBe(false);
   });
 
   it.each([

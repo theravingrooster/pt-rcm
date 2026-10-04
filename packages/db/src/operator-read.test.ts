@@ -65,7 +65,7 @@ describe.skipIf(!url)("operator read models", () => {
     await scrubEncounter(db, organizationId, encounterId);
     const encounter = (await getOperatorEncounter(db, organizationId, encounterId))!;
     expect(encounter.allocation.totalUnits).toBe(3);
-    expect(encounter.findings).toHaveLength(8);
+    expect(encounter.findings).toHaveLength(9);
     expect(encounter.document.json).toContain('"GP"');
     expect((await listOperatorEncounters(db, organizationId)).find(row => row.encounter.id === encounterId)).toMatchObject({ units: 3, blocks: 0, unitsSource: "Claim" });
     const ack = await submitScrubbedClaim(db, organizationId, scrub.claimId, { adapter: "fixture", clearinghouse: new FixtureClearinghouse() });

@@ -132,10 +132,11 @@ describe("runRules", () => {
     expect(runRules([{ ...ALWAYS_FLAG, version: 0 }], makeContext()).blocks[0]).toMatchObject({ code: "RULE_CRASH", ruleId: "ALWAYS_FLAG" });
   });
 
-  it("registers PT version 1 while keeping ALWAYS_FLAG test-only", () => {
-    expect(api.defaultRulePack).toHaveLength(8);
-    expect(api.defaultRulePackVersion).toBe(1);
+  it("registers PT version 4 while keeping ALWAYS_FLAG test-only", () => {
+    expect(api.defaultRulePack).toHaveLength(9);
+    expect(api.defaultRulePackVersion).toBe(4);
     expect(api.defaultRulePackMode).toBe("active");
+    expect(api.defaultRulePack.some((rule) => rule.id === "pta-cq-modifier")).toBe(true);
     expect(api.defaultRulePack.some((rule) => rule.id === "ALWAYS_FLAG")).toBe(false);
     expect(Object.isFrozen(api.defaultRulePack)).toBe(true);
     expect(api).not.toHaveProperty("ALWAYS_FLAG");

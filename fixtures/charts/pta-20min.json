@@ -1,0 +1,10 @@
+{
+  "externalNoteId": "SYN-PTA-20MIN-NOTE",
+  "patientExternalId": "SYN-PATIENT-SHOULDER",
+  "renderingNpi": "0000000003",
+  "dateOfService": "2026-10-01",
+  "diagnoses": ["M25.511"],
+  "timedEntries": [
+    { "cptCode": "97110", "startTime": "2026-10-01T09:00:00Z", "stopTime": "2026-10-01T09:20:00Z", "performer": "PTA" }
+  ]
+}

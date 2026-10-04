@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { copyRulePackToShadow, ptEligibilityShadowPack, ptShadowPack, resolveRulePack, rulePackManifest } from "./packVersioning.js";
-import { coverageInactiveRule, ptPack, timedCodeCapRule } from "./ptPack.js";
+import { copyRulePackToShadow, ptEligibilityShadowPack, ptPtaPack, ptShadowPack, resolveRulePack, rulePackManifest } from "./packVersioning.js";
+import { coverageInactiveRule, ptPack, ptaCqModifierRule, timedCodeCapRule } from "./ptPack.js";
 import { runRules } from "./runtime.js";
 import { makeContext } from "./testing/fixtures.js";
 
@@ -29,12 +29,25 @@ describe("rule pack versions", () => {
     expect(copyRulePackToShadow(ptShadowPack, 3, [coverageInactiveRule])).toEqual(ptEligibilityShadowPack);
   });
 
+  it("builds a separate v4 active pack from v1 with only the PTA rule", () => {
+    expect(ptPtaPack).toMatchObject({ id: "outpatient-pt", version: 4, mode: "active" });
+    expect(ptPtaPack.rules.slice(0, ptPack.rules.length)).toEqual(ptPack.rules);
+    expect(ptPtaPack.rules.at(-1)).toBe(ptaCqModifierRule);
+    expect(ptPack.rules).toHaveLength(8);
+    expect(ptShadowPack.rules.some(({ id }) => id === ptaCqModifierRule.id)).toBe(false);
+    expect(ptEligibilityShadowPack.rules.some(({ id }) => id === ptaCqModifierRule.id)).toBe(false);
+    expect(ptPtaPack.rules.some(({ id }) => id === coverageInactiveRule.id || id === timedCodeCapRule.id)).toBe(false);
+    expect(Object.isFrozen(ptPtaPack)).toBe(true);
+    expect(Object.isFrozen(ptPtaPack.rules)).toBe(true);
+    expect(() => resolveRulePack({ ...rulePackManifest(ptPack), version: 4 })).toThrow(/roster/);
+  });
+
   it("resolves only the exact rule references shipped with each deployed version", () => {
-    for (const pack of [ptPack, ptShadowPack, ptEligibilityShadowPack]) {
+    for (const pack of [ptPack, ptShadowPack, ptEligibilityShadowPack, ptPtaPack]) {
       expect(resolveRulePack(rulePackManifest(pack)).rules).toBe(pack.rules);
     }
     const manifest = rulePackManifest(ptEligibilityShadowPack);
-    expect(() => resolveRulePack({ ...manifest, version: 4 })).toThrow(/not deployed/);
+    expect(() => resolveRulePack({ ...manifest, version: 5 })).toThrow(/not deployed/);
     expect(() => resolveRulePack({ ...manifest, id: "foreign-pack" })).toThrow();
     expect(() => resolveRulePack({ ...manifest, rules: manifest.rules.slice(1) })).toThrow(/roster/);
     expect(() => resolveRulePack({ ...manifest, rules: [...manifest.rules, manifest.rules[0]] })).toThrow(/roster/);

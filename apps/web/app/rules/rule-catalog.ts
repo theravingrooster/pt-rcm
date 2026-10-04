@@ -2,7 +2,7 @@
 export const ruleGroups = [
   { title: "Claim submission", steps: [
     { title: "Update coding", ids: ["zero-minute-timed", "eval-with-treatment", "timed-code-cap"] },
-    { title: "Update modifiers", ids: ["gp-modifier", "kx-threshold", "distinct-procedure"] },
+    { title: "Update modifiers", ids: ["gp-modifier", "pta-cq-modifier", "kx-threshold", "distinct-procedure"] },
     { title: "Add charge amounts", ids: ["eight-minute-applied"] },
     { title: "Finalize claim", ids: [] },
   ] },
@@ -17,6 +17,7 @@ export const ruleGroups = [
 // Outcomes describe what each code-backed rule can return, including PASS.
 export const ruleOutcomes: Record<string, readonly string[]> = {
   "gp-modifier": ["PASS", "DOWNGRADE"],
+  "pta-cq-modifier": ["PASS", "DOWNGRADE"],
   "eight-minute-applied": ["PASS", "FLAG", "BLOCK"],
   "zero-minute-timed": ["PASS", "BLOCK"],
   "kx-threshold": ["PASS", "FLAG", "BLOCK"],

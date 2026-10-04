@@ -15,8 +15,8 @@ const row = {
   claim: { status: "SCRUBBED", version: 2 }, status: "SCRUBBED", units: 3,
   rawMinutes: 40, billableUnionMinutes: 40, overlappingMinutes: 0,
   entries: [
-    { id: "line-1", cptCode: "97110", minutes: 20, rawMinutes: 20, billableMinutes: 20, timing: { startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z" } },
-    { id: "line-2", cptCode: "97530", minutes: 20, rawMinutes: 20, billableMinutes: 20, timing: { startTime: "2026-10-01T09:20:00Z", stopTime: "2026-10-01T09:40:00Z" } },
+    { id: "line-1", cptCode: "97110", minutes: 20, rawMinutes: 20, billableMinutes: 20, performer: "PT", timing: { startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z" } },
+    { id: "line-2", cptCode: "97530", minutes: 20, rawMinutes: 20, billableMinutes: 20, performer: "PT", timing: { startTime: "2026-10-01T09:20:00Z", stopTime: "2026-10-01T09:40:00Z" } },
   ],
 };
 
@@ -31,6 +31,8 @@ describe("Charts page", () => {
     expect(html).toContain("SYN-PATIENT-1");
     expect(html).toContain("97110 · 20 min");
     expect(html).toContain("97530 · 20 min");
+    expect(html).toContain("97110 · 20 min · PT");
+    expect(html).not.toContain("PTA");
     expect(html).toContain("SCRUBBED");
     expect(html).toContain("v2");
     expect(html).toContain("Raw minutes");
@@ -62,6 +64,16 @@ describe("Charts page", () => {
     expect(overlapping).toContain("97140 · 20 min");
     expect(overlapping).toMatch(/<td class="number">40<\/td><td class="number">30<\/td>/);
     expect(overlapping).toContain("OVERLAPPING_MINUTES");
+  });
+
+  it("identifies PTA performance in the timed entry on the chart list", async () => {
+    vi.mocked(loadOperatorData).mockResolvedValue({ ok: true, data: [{ ...row,
+      noteId: "SYN-PTA-20MIN-NOTE",
+      entries: [{ ...row.entries[0], performer: "PTA" }],
+      rawMinutes: 20, billableUnionMinutes: 20, overlappingMinutes: 0,
+    }] } as never);
+    const html = renderToStaticMarkup(await ChartsPage());
+    expect(html).toContain("97110 · 20 min · PTA");
   });
 
   it("shows DRAFT only when no claim has been created", async () => {

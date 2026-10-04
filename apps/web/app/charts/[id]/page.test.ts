@@ -18,8 +18,8 @@ describe("locked chart detail", () => {
       latestClaim: { id: claimId, version: 1, status: "SCRUBBED" }, status: "SCRUBBED",
       rawMinutes: 40, billableUnionMinutes: 40, overlappingMinutes: 0,
       entries: [
-        { id: "line-1", cptCode: "97110", minutes: 20, rawMinutes: 20, billableMinutes: 20, timing: { startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z" } },
-        { id: "line-2", cptCode: "97530", minutes: 20, rawMinutes: 20, billableMinutes: 20, timing: { startTime: "2026-10-01T09:20:00Z", stopTime: "2026-10-01T09:40:00Z" } },
+        { id: "line-1", cptCode: "97110", minutes: 20, rawMinutes: 20, billableMinutes: 20, performer: "PT", timing: { startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z" } },
+        { id: "line-2", cptCode: "97530", minutes: 20, rawMinutes: 20, billableMinutes: 20, performer: "PT", timing: { startTime: "2026-10-01T09:20:00Z", stopTime: "2026-10-01T09:40:00Z" } },
       ],
       allocation: { totalTimedMinutes: 40, totalUnits: 3, unusedMinutes: 0, flags: [], lines: [
         { cptCode: "97110", minutes: 20, units: 2, remainderMinutes: 5 },
@@ -34,6 +34,9 @@ describe("locked chart detail", () => {
     expect(html).toContain(`/claims/${claimId}`);
     expect(html).toContain("SCRUBBED");
     expect(html).toContain("Billable union");
+    expect(html).toContain("Performer");
+    expect(html).toMatch(/<td>PT<\/td>/);
+    expect(html).not.toContain("PTA");
     expect(html).not.toContain("OVERLAPPING_MINUTES");
     expect(html).not.toContain("Encounter: DRAFT");
   });
@@ -45,9 +48,9 @@ describe("locked chart detail", () => {
       latestClaim: { id: claimId, version: 1, status: "SCRUBBED" },
       rawMinutes: 40, billableUnionMinutes: 30, overlappingMinutes: 10,
       entries: [
-        { id: "line-1", cptCode: "97110", minutes: 20, rawMinutes: 20, billableMinutes: 20,
+        { id: "line-1", cptCode: "97110", minutes: 20, rawMinutes: 20, billableMinutes: 20, performer: "PTA",
           timing: { startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z" } },
-        { id: "line-2", cptCode: "97140", minutes: 10, rawMinutes: 20, billableMinutes: 10,
+        { id: "line-2", cptCode: "97140", minutes: 10, rawMinutes: 20, billableMinutes: 10, performer: "PT",
           timing: { startTime: "2026-10-01T09:10:00Z", stopTime: "2026-10-01T09:30:00Z" } },
       ],
       allocation: { totalTimedMinutes: 30, totalUnits: 2, unusedMinutes: 0, flags: [], lines: [
@@ -60,6 +63,7 @@ describe("locked chart detail", () => {
     expect(html).toContain("40</dd>");
     expect(html).toContain("30</dd>");
     expect(html).toContain("30</strong> billable union minutes");
+    expect(html).toMatch(/<td>PTA<\/td>/);
     expect(html).toMatch(/<td class="number">20<\/td><td class="number">10<\/td>/);
   });
 });

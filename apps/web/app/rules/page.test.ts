@@ -20,6 +20,19 @@ describe("rule console", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids).toContain("timed-code-cap");
     expect(ids.every((id) => ruleOutcomes[id]?.includes("PASS"))).toBe(true);
+    expect(ruleGroups[0].steps.find((step) => step.title === "Update modifiers")?.ids)
+      .toContain("pta-cq-modifier");
+    expect(ruleOutcomes["pta-cq-modifier"]).toEqual(["PASS", "DOWNGRADE"]);
+  });
+
+  it("shows the PTA modifier rule and its downgrade outcome", async () => {
+    vi.mocked(loadOperatorData).mockResolvedValue({ ok: true, data: { activeVersion: "1", shadowVersion: "3",
+      rules: [{ id: "pta-cq-modifier", version: 1, description: "Apply CQ to a PTA-performed billed timed line.",
+        active: true, shadow: false }] } } as never);
+    const html = renderToStaticMarkup(await RulesPage());
+    expect(html).toContain('href="/rules/pta-cq-modifier"');
+    expect(html).toContain("DOWNGRADE");
+    expect(html).toContain("ACTIVE");
   });
 
   it("shows pack status and code-backed outcomes without an editor", async () => {

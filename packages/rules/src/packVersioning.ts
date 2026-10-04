@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { coverageInactiveRule, ptPack, timedCodeCapRule } from "./ptPack.js";
+import { coverageInactiveRule, ptPack, ptaCqModifierRule, timedCodeCapRule } from "./ptPack.js";
 import type { Rule } from "./types.js";
 
 export type VersionedRulePack = Readonly<{
@@ -26,6 +26,12 @@ export const ptShadowPack = copyRulePackToShadow(ptPack, 2, [timedCodeCapRule]);
 // candidate so existing audit rows continue to identify the policy they ran.
 export const ptEligibilityShadowPack = copyRulePackToShadow(ptShadowPack, 3, [coverageInactiveRule]);
 
+// CQ enters a separate active v4 roster copied from v1. The v2/v3 candidates
+// remain shadow-only and their immutable manifests are not rewritten.
+export const ptPtaPack: VersionedRulePack = Object.freeze({
+  ...copyRulePackToShadow(ptPack, 4, [ptaCqModifierRule]), mode: "active" as const,
+});
+
 export const RulePackManifestSchema = z.object({
   id: z.literal("outpatient-pt"),
   version: z.number().int().positive(),
@@ -42,7 +48,7 @@ export function rulePackManifest(pack: Pick<VersionedRulePack, "id" | "version" 
 /** Resolve a stored manifest only when it exactly matches a deployed version. */
 export function resolveRulePack(value: unknown): Pick<VersionedRulePack, "id" | "version" | "rules"> {
   const manifest = RulePackManifestSchema.parse(value);
-  const pack = [ptPack, ptShadowPack, ptEligibilityShadowPack]
+  const pack = [ptPack, ptShadowPack, ptEligibilityShadowPack, ptPtaPack]
     .find((entry) => entry.id === manifest.id && entry.version === manifest.version);
   if (!pack) throw new TypeError("Rule pack version is not deployed");
   const expected = rulePackManifest(pack).rules.map(({ id, version }) => `${id}@${version}`).sort();

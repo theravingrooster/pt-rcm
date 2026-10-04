@@ -76,7 +76,7 @@ describe.skipIf(!url)("transactional PT scrub", () => {
     return { claim, lines, fires };
   }
 
-  it("shoulder 20+20 allocates three units, adds GP, prices in cents, and persists all eight active findings", async () => {
+  it("shoulder 20+20 allocates three units, adds GP, prices in cents, and persists all nine active findings", async () => {
     const { encounterId } = await create();
     const result = await scrub(encounterId);
     expect(result).toMatchObject({ status: "SCRUBBED", totalUnits: 3, totalChargeCents: 13500, submissionAllowed: true, version: 1 });
@@ -85,13 +85,14 @@ describe.skipIf(!url)("transactional PT scrub", () => {
       { cptCode: "97110", minutes: 20, units: 2, modifiers: ["GP"], chargeCents: 9000, diagnosisPointers: [0] },
       { cptCode: "97530", minutes: 20, units: 1, modifiers: ["GP"], chargeCents: 4500, diagnosisPointers: [0] },
     ]);
-    expect(saved.fires).toHaveLength(8);
+    expect(saved.fires).toHaveLength(9);
     expect(saved.fires.every((fire) => !fire.shadow && fire.ruleVersion === "1")).toBe(true);
     expect(saved.fires.find((fire) => fire.ruleId === "gp-modifier")).toMatchObject({ outcome: "DOWNGRADE", detailJson: { code: "MISSING_GP" } });
-    expect(saved.claim).toMatchObject({ status: "SCRUBBED", snapshotJson: { rulePack: { id: "outpatient-pt", version: 1, mode: "active" }, yearToDateBilledCents: 0 } });
+    expect(saved.fires.find((fire) => fire.ruleId === "pta-cq-modifier")).toMatchObject({ outcome: "PASS" });
+    expect(saved.claim).toMatchObject({ status: "SCRUBBED", snapshotJson: { rulePack: { id: "outpatient-pt", version: 4, mode: "active" }, yearToDateBilledCents: 0 } });
     const repeat = await scrub(encounterId);
     expect(repeat).toMatchObject({ claimId: result.claimId, version: 1, status: "SCRUBBED", totalUnits: 3 });
-    expect((await stored(result.claimId)).fires).toHaveLength(16);
+    expect((await stored(result.claimId)).fires).toHaveLength(18);
     expect(repeat.findings.find((finding) => finding.ruleId === "gp-modifier")).toMatchObject({ outcome: "PASS" });
   });
 
@@ -283,7 +284,7 @@ describe.skipIf(!url)("transactional PT scrub", () => {
     const second = await scrub(encounterId);
     expect(second).toMatchObject({ version: 2, totalUnits: 1, totalChargeCents: 4500 });
     expect(second.claimId).not.toBe(first.claimId);
-    expect((await stored(first.claimId)).fires).toHaveLength(8);
+    expect((await stored(first.claimId)).fires).toHaveLength(9);
   });
 
   it.each(["SUBMITTED", "ACCEPTED", "REJECTED", "PAID", "PATIENT_BALANCE", "SHADOWED"] as const)("rejects re-scrub after %s and respects organization scope", async (status) => {
@@ -292,7 +293,7 @@ describe.skipIf(!url)("transactional PT scrub", () => {
     await connection.db.update(s.claims).set({ status }).where(eq(s.claims.id, first.claimId));
     await expect(scrub(encounterId)).rejects.toMatchObject({ status: 409, code: "CLAIM_ALREADY_SUBMITTED" });
     await expect(scrubEncounter(connection.db, seedOrganization.id, encounterId)).rejects.toMatchObject({ status: 404 });
-    expect((await stored(first.claimId)).fires).toHaveLength(8);
+    expect((await stored(first.claimId)).fires).toHaveLength(9);
   });
 
   it("rejects ambiguous active coverage before creating a claim", async () => {
@@ -404,7 +405,7 @@ describe.skipIf(!url)("transactional PT scrub", () => {
       expect(saved.claim).toMatchObject({ status: "SUBMITTED", totalChargeCents: 13500, snapshotJson: {
         submission: { adapter: "fixture", acknowledgment: result.acknowledgment, document, submittedAt: expect.stringMatching(/Z$/) },
       } });
-      expect(saved.fires).toHaveLength(8);
+      expect(saved.fires).toHaveLength(9);
       const audits = await connection.db.select().from(s.auditEvents).where(eq(s.auditEvents.entityId, scrubbed.claimId));
       expect(audits).toMatchObject([{ actor: "SYN-FIXTURE-SUBMIT", action: "CLAIM_SUBMITTED", entity: "Claim",
         detailJson: { adapter: "fixture", icn: result.icn, acknowledgmentStatus: "accepted-for-processing" } }]);

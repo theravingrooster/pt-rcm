@@ -5,7 +5,7 @@ import { RuleResultSchema, type ClaimDraft, type DowngradeFinding } from "./type
  * Apply active proposals to a new unpriced draft. Patches specify absolute unit
  * ceilings, not deltas: overlapping proposals take the lowest ceiling, independent
  * of rule order. Zero-unit lines remain for the caller to review before persistence.
- * GP may be added without duplicates. No minutes, codes, diagnoses, charges,
+ * GP and CQ may be added without duplicates. No minutes, codes, diagnoses, charges,
  * other modifiers, or source encounters are edited.
  */
 export function applyDowngrades(draft: ClaimDraft, downgrades: readonly DowngradeFinding[]): ClaimDraft {

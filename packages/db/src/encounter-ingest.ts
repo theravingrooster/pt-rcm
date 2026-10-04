@@ -138,6 +138,7 @@ export async function upsertEncounter(db: Database, organizationId: string, inpu
       notes: options ? JSON.stringify({ source: "SYNTHETIC_LOCKED_PT_NOTE", externalNoteId: options.lockedNote.externalNoteId,
         ...(chartIntervals!.lines[index] ? {
           startTime: chartIntervals!.lines[index]!.startTime, stopTime: chartIntervals!.lines[index]!.stopTime,
+          performer: chartIntervals!.lines[index]!.performer,
           rawMinutes: chartIntervals!.lines[index]!.rawMinutes,
           billableMinutes: chartIntervals!.lines[index]!.billableMinutes,
           overlapMinutes: chartIntervals!.lines[index]!.rawMinutes - chartIntervals!.lines[index]!.billableMinutes,

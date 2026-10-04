@@ -18,10 +18,16 @@ const timing = { source: "SYNTHETIC_LOCKED_PT_NOTE", externalNoteId: noteId,
 describe("locked chart timing read model", () => {
   it("shows only validated recorded times that produce the saved computed minutes", () => {
     expect(chartTimingForLine(JSON.stringify(timing), noteId, 20)).toEqual({
-      startTime: timing.startTime, stopTime: timing.stopTime, rawMinutes: 20,
+      startTime: timing.startTime, stopTime: timing.stopTime, rawMinutes: 20, performer: "PT",
     });
     expect(chartTimingForLine(JSON.stringify(timing), noteId, 19)).toBeNull();
     expect(chartTimingForLine(JSON.stringify(timing), "SYN-OTHER", 20)).toBeNull();
+  });
+
+  it("reads a saved PTA performer and rejects an unknown performer", () => {
+    expect(chartTimingForLine(JSON.stringify({ ...timing, performer: "PTA" }), noteId, 20))
+      .toMatchObject({ performer: "PTA", rawMinutes: 20 });
+    expect(chartTimingForLine(JSON.stringify({ ...timing, performer: "ASSISTANT" }), noteId, 20)).toBeNull();
   });
 
   it.each([null, "not json", JSON.stringify({ ...timing, stopTime: "2026-10-01T08:40:00Z" }),
@@ -32,7 +38,7 @@ describe("locked chart timing read model", () => {
   it("keeps the full recorded interval while validating overlap credit", () => {
     const notes = JSON.stringify({ ...timing, rawMinutes: 20, billableMinutes: 10, overlapMinutes: 10 });
     expect(chartTimingForLine(notes, noteId, 10)).toEqual({
-      startTime: timing.startTime, stopTime: timing.stopTime, rawMinutes: 20,
+      startTime: timing.startTime, stopTime: timing.stopTime, rawMinutes: 20, performer: "PT",
     });
     expect(chartTimingForLine(notes, noteId, 20)).toBeNull();
     expect(chartTimingForLine(JSON.stringify({ ...timing, rawMinutes: 20, billableMinutes: 10,
@@ -44,14 +50,17 @@ const url = process.env.TEST_DATABASE_URL;
 const patientExternalId = `SYN-CHART-READ-PATIENT-${randomUUID()}`;
 const lockedNoteId = `SYN-CHART-READ-NOTE-${randomUUID()}`;
 const overlappingNoteId = `SYN-CHART-OVERLAP-NOTE-${randomUUID()}`;
+const ptaNoteId = `SYN-CHART-PTA-NOTE-${randomUUID()}`;
 const original = JSON.parse(readFileSync(new URL("../../../fixtures/encounters/shoulder-23min.json", import.meta.url), "utf8")) as EncounterIngestInput;
 const overlappingFixture = JSON.parse(readFileSync(new URL("../../../fixtures/charts/overlapping-30min.json", import.meta.url), "utf8")) as LockedPtNote;
+const ptaFixture = JSON.parse(readFileSync(new URL("../../../fixtures/charts/pta-20min.json", import.meta.url), "utf8")) as LockedPtNote;
 
 describe.skipIf(!url)("Charts read model with a locked shoulder note", () => {
   let connection: ReturnType<typeof createDatabase>;
   let patientId: string;
   let encounterId: string;
   let overlappingEncounterId: string;
+  let ptaEncounterId: string;
   let baseEncounterId: string;
 
   beforeAll(async () => {
@@ -75,13 +84,17 @@ describe.skipIf(!url)("Charts read model with a locked shoulder note", () => {
       ...overlappingFixture, externalNoteId: overlappingNoteId, patientExternalId,
     });
     overlappingEncounterId = overlapping.encounterId;
+    const pta = await lockPtChartNote(connection.db, seedOrganization.id, {
+      ...ptaFixture, externalNoteId: ptaNoteId, patientExternalId,
+    });
+    ptaEncounterId = pta.encounterId;
   });
 
   afterAll(async () => {
     if (!connection) return;
     try {
       if (patientId) await connection.db.transaction(async (tx) => {
-        const encounterIds = [baseEncounterId, encounterId, overlappingEncounterId].filter(Boolean);
+        const encounterIds = [baseEncounterId, encounterId, overlappingEncounterId, ptaEncounterId].filter(Boolean);
         const claims = await tx.select({ id: s.claims.id }).from(s.claims).where(inArray(s.claims.encounterId, encounterIds));
         const claimIds = claims.map(({ id }) => id);
         if (claimIds.length) {
@@ -108,7 +121,8 @@ describe.skipIf(!url)("Charts read model with a locked shoulder note", () => {
     expect(row).toMatchObject({ noteId: lockedNoteId, status: "SCRUBBED", units: 3,
       rawMinutes: 40, billableUnionMinutes: 40, overlappingMinutes: 0 });
     expect(row.entries.map(({ cptCode, minutes }) => [cptCode, minutes])).toEqual([["97110", 20], ["97530", 20]]);
-    expect(row.entries[0]?.timing).toEqual({ startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z", rawMinutes: 20 });
+    expect(row.entries[0]?.timing).toEqual({ startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z", rawMinutes: 20, performer: "PT" });
+    expect(row.entries.map(({ performer }) => performer)).toEqual(["PT", "PT"]);
     const detail = await getOperatorChart(connection.db, seedOrganization.id, encounterId);
     expect(detail?.allocation.totalUnits).toBe(3);
     expect(detail?.latestClaim?.status).toBe("SCRUBBED");
@@ -126,5 +140,15 @@ describe.skipIf(!url)("Charts read model with a locked shoulder note", () => {
     const detail = await getOperatorChart(connection.db, seedOrganization.id, overlappingEncounterId);
     expect(detail?.allocation.totalTimedMinutes).toBe(30);
     expect(detail?.allocation.lines.reduce((sum, line) => sum + line.minutes, 0)).toBe(30);
+  });
+
+  it("shows the saved PTA performer on the fixture note while the shoulder defaults to PT", async () => {
+    const rows = await listOperatorCharts(connection.db, seedOrganization.id);
+    const pta = rows.find(({ encounter }) => encounter.id === ptaEncounterId)!;
+    const shoulder = rows.find(({ encounter }) => encounter.id === encounterId)!;
+    expect(pta.entries.map(({ performer }) => performer)).toEqual(["PTA"]);
+    expect(shoulder.entries.map(({ performer }) => performer)).toEqual(["PT", "PT"]);
+    expect((await getOperatorChart(connection.db, seedOrganization.id, ptaEncounterId))?.entries[0]?.performer)
+      .toBe("PTA");
   });
 });
