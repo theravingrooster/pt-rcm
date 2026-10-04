@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getOperatorEncounter } from "@pt-rcm/db";
+import { chartTimingForLine, getOperatorEncounter } from "@pt-rcm/db";
 import { getCptFixture, IdSchema } from "@pt-rcm/domain";
 import { ActionForm } from "../../_components/action-form.js";
 import { Badge, ClaimJson, DataUnavailable, EmptyState, TableFrame } from "../../_components/operator.js";
@@ -54,7 +54,12 @@ export default async function EncounterPage({ params }: { params: Promise<{ id: 
     <div className="two-columns">
       <section className="panel"><div className="section-heading"><h2>Recorded minute lines</h2><span className="muted">Source encounter</span></div>
         {minuteLines.length ? <TableFrame label="Recorded minute lines"><table><thead><tr><th scope="col">CPT / service</th><th scope="col">Timing</th><th scope="col" className="number">Minutes</th></tr></thead>
-          <tbody>{minuteLines.map((line) => <tr key={line.id}><td><span className="mono">{line.cptCode}</span><span className="subtext">{getCptFixture(line.cptCode)?.name ?? "Fixture service"}</span>{line.notes ? <span className="subtext">{line.notes}</span> : null}</td><td>{line.timed ? "Timed" : "Untimed"}</td><td className="number">{line.minutes}</td></tr>)}</tbody></table></TableFrame> : <EmptyState>No minute lines recorded.</EmptyState>}
+          <tbody>{minuteLines.map((line) => {
+            const chartNoteId = encounter.externalId.startsWith("SYN-CHART-") ? encounter.externalId.slice("SYN-CHART-".length) : null;
+            const timing = chartNoteId === null ? null : chartTimingForLine(line.notes, chartNoteId, line.minutes);
+            return <tr key={line.id}><td><span className="mono">{line.cptCode}</span><span className="subtext">{getCptFixture(line.cptCode)?.name ?? "Fixture service"}</span>
+              {timing ? <span className="subtext mono">{timing.startTime} → {timing.stopTime}</span> : chartNoteId === null && line.notes ? <span className="subtext">{line.notes}</span> : null}</td><td>{line.timed ? "Timed" : "Untimed"}</td><td className="number">{line.minutes}</td></tr>;
+          })}</tbody></table></TableFrame> : <EmptyState>No minute lines recorded.</EmptyState>}
       </section>
       <section className="panel"><div className="section-heading"><h2>Allocator output</h2><span className="muted">Current encounter preview</span></div>
         <div className="allocation-totals"><span><strong>{allocation.totalTimedMinutes}</strong> timed minutes</span><span><strong>{allocation.totalUnits}</strong> units</span><span><strong>{allocation.unusedMinutes}</strong> unused minutes</span></div>

@@ -5,6 +5,7 @@ import * as schema from "./schema.js";
 export * from "./schema.js";
 export * from "./encounter-ingest.js";
 export * from "./chart-lock.js";
+export * from "./charts-console-read.js";
 export * from "./encounter-scrub.js";
 export * from "./claim-document.js";
 export * from "./claim-submit.js";

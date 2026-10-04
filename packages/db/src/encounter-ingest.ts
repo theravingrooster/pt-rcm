@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { EncounterIngestSchema, IdSchema, getCptFixture, type EncounterIngestResult } from "@pt-rcm/domain";
+import { EncounterIngestSchema, IdSchema, getCptFixture, type EncounterIngestResult, type LockedPtNote } from "@pt-rcm/domain";
 import type { Database } from "./index.js";
 import * as s from "./schema.js";
 import { seedOrganization, seedPayers } from "./seed-data.js";
@@ -17,15 +17,24 @@ export class EncounterIngestError extends Error {
   }
 }
 
-/** Persist recorded inputs only. No billing rules, allocation, or clearinghouse calls. */
+/** Persist recorded inputs only. Billing rules are evaluated by the caller's scrub. */
 export async function upsertEncounter(db: Database, organizationId: string, input: unknown,
-  options?: { source: "chart" }): Promise<EncounterIngestResult> {
+  options?: { source: "chart"; lockedNote: LockedPtNote }): Promise<EncounterIngestResult> {
   IdSchema.parse(organizationId);
   const data = EncounterIngestSchema.parse(input);
   // The chart namespace may only be written by the locked-note path, which
   // computes minutes from timestamps rather than accepting caller minutes.
   if (data.externalId.startsWith("SYN-CHART-") !== (options?.source === "chart")) {
     throw new EncounterIngestError(422, "CHART_SOURCE_REQUIRED", "Chart encounters require a locked synthetic note");
+  }
+  if (options && (data.externalId !== `SYN-CHART-${options.lockedNote.externalNoteId}`
+    || data.minuteLines.length !== options.lockedNote.timedEntries.length
+    || data.minuteLines.some((line, index) => {
+      const entry = options.lockedNote.timedEntries[index]!;
+      return line.cptCode !== entry.cptCode
+        || line.minutes !== (Date.parse(entry.stopTime) - Date.parse(entry.startTime)) / 60_000;
+    }))) {
+    throw new EncounterIngestError(422, "CHART_SOURCE_MISMATCH", "Chart minutes must match locked note times");
   }
   return db.transaction(async (tx) => {
     // Serialize even the first insert for an organization/external ID pair.
@@ -120,8 +129,10 @@ export async function upsertEncounter(db: Database, organizationId: string, inpu
     if (!encounter) throw new Error("Encounter upsert returned no row");
     await tx.delete(s.encounterMinuteLines).where(eq(s.encounterMinuteLines.encounterId, encounter.id));
     await tx.delete(s.diagnoses).where(eq(s.diagnoses.encounterId, encounter.id));
-    if (data.minuteLines.length) await tx.insert(s.encounterMinuteLines).values(data.minuteLines.map((line) => ({
-      ...line, encounterId: encounter.id, timed: getCptFixture(line.cptCode)!.timed, notes: null,
+    if (data.minuteLines.length) await tx.insert(s.encounterMinuteLines).values(data.minuteLines.map((line, index) => ({
+      ...line, encounterId: encounter.id, timed: getCptFixture(line.cptCode)!.timed,
+      notes: options ? JSON.stringify({ source: "SYNTHETIC_LOCKED_PT_NOTE", externalNoteId: options.lockedNote.externalNoteId,
+        startTime: options.lockedNote.timedEntries[index]!.startTime, stopTime: options.lockedNote.timedEntries[index]!.stopTime }) : null,
     })));
     if (data.diagnoses.length) await tx.insert(s.diagnoses).values(data.diagnoses.map((icd10, pointer) => ({
       encounterId: encounter.id, icd10, pointer, primary: pointer === 0,

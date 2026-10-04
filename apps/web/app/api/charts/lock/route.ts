@@ -1,5 +1,6 @@
 import { LockedPtNoteSchema } from "@pt-rcm/domain";
-import { ChartLockError, createDatabase, DEFAULT_INGEST_ORGANIZATION_ID, EncounterIngestError, lockPtChartNote } from "@pt-rcm/db";
+import { ChartLockError, createDatabase, DEFAULT_INGEST_ORGANIZATION_ID, EncounterIngestError,
+  EncounterScrubError, lockPtChartNote } from "@pt-rcm/db";
 
 export const runtime = "nodejs";
 const headers = { "Cache-Control": "no-store" };
@@ -25,7 +26,7 @@ export async function POST(request: Request): Promise<Response> {
       process.env.INGEST_ORGANIZATION_ID ?? DEFAULT_INGEST_ORGANIZATION_ID, parsed.data);
     return Response.json({ encounterId: result.encounterId }, { status: result.created ? 201 : 200, headers });
   } catch (error) {
-    if (error instanceof ChartLockError || error instanceof EncounterIngestError) {
+    if (error instanceof ChartLockError || error instanceof EncounterIngestError || error instanceof EncounterScrubError) {
       return Response.json({ error: error.code, message: error.message }, { status: error.status, headers });
     }
     return Response.json({ error: "CHART_LOCK_FAILED" }, { status: 500, headers });

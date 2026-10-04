@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ChartLockError, EncounterIngestError, lockPtChartNote } from "@pt-rcm/db";
+import { ChartLockError, EncounterIngestError, EncounterScrubError, lockPtChartNote } from "@pt-rcm/db";
 import { POST } from "./route.js";
 
 vi.mock("@pt-rcm/db", async (importOriginal) => ({
@@ -20,6 +20,7 @@ const note = {
   ],
 };
 const encounterId = "00000000-0000-4000-8000-000000000101";
+const claimId = "00000000-0000-4000-8000-000000000102";
 const request = (body: unknown = note) => new Request("http://localhost/api/charts/lock", {
   method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" },
 });
@@ -28,7 +29,7 @@ describe("POST /api/charts/lock", () => {
   beforeEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });
 
   it.each([[true, 201], [false, 200]] as const)("returns only encounter ID when created=%s", async (created, status) => {
-    vi.mocked(lockPtChartNote).mockResolvedValue({ encounterId, patientId: encounterId, created, status: "DRAFT" });
+    vi.mocked(lockPtChartNote).mockResolvedValue({ encounterId, patientId: encounterId, created, status: "SCRUBBED", claimId, totalUnits: 3 });
     const response = await POST(request());
     expect(response.status).toBe(status);
     expect(await response.json()).toEqual({ encounterId });
@@ -38,7 +39,7 @@ describe("POST /api/charts/lock", () => {
   it("uses a server-scoped organization rather than input", async () => {
     const organizationId = "00000000-0000-4000-8000-000000000999";
     vi.stubEnv("INGEST_ORGANIZATION_ID", organizationId);
-    vi.mocked(lockPtChartNote).mockResolvedValue({ encounterId, patientId: encounterId, created: true, status: "DRAFT" });
+    vi.mocked(lockPtChartNote).mockResolvedValue({ encounterId, patientId: encounterId, created: true, status: "SCRUBBED", claimId, totalUnits: 3 });
     await POST(request());
     expect(lockPtChartNote).toHaveBeenCalledWith({}, organizationId, note);
   });
@@ -68,6 +69,13 @@ describe("POST /api/charts/lock", () => {
     const response = await POST(request());
     expect(response.status).toBe(409);
     expect(await response.json()).toEqual({ error: "CLAIM_ALREADY_SUBMITTED", message: "Submitted" });
+  });
+
+  it("reports a scrub conflict without claiming the lock succeeded", async () => {
+    vi.mocked(lockPtChartNote).mockRejectedValue(new EncounterScrubError(409, "DRAFT_LINES_INVALID", "Stored draft cannot be scrubbed"));
+    const response = await POST(request());
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "DRAFT_LINES_INVALID", message: "Stored draft cannot be scrubbed" });
   });
 
   it("reports missing fixture patient without leaking database details", async () => {

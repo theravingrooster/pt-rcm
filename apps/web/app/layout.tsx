@@ -9,7 +9,7 @@ export const metadata = {
 
 const operations = [
   ["Home", "/"], ["Reports", "/reports"], ["Claims", "/claims"],
-  ["Queues", "/queues"], ["Tasks", "/tasks"], ["Patients", "/patients"], ["Remits", "/remits"],
+  ["Queues", "/queues"], ["Charts", "/charts"], ["Tasks", "/tasks"], ["Patients", "/patients"], ["Remits", "/remits"],
 ] as const;
 const configuration = [
   ["Rules", "/rules"], ["Providers", "/providers"], ["Payers", "/payers"],

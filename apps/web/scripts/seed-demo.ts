@@ -33,6 +33,26 @@ async function lockShoulderNote() {
   return response.json() as Promise<{ encounterId: string }>;
 }
 
+async function lockedShoulderState(connection: ReturnType<typeof createDatabase>, organizationId: string) {
+  const [state] = await connection.client`select e.id as encounter_id, c.status as claim_status,
+      (select coalesce(sum(units), 0)::int from claim_lines where claim_id = c.id) as total_units,
+      (select count(*)::int from encounter_minute_lines l where l.encounter_id = e.id) as entry_count,
+      (select count(*)::int from encounter_minute_lines l where l.encounter_id = e.id
+        and l.notes like '%"source":"SYNTHETIC_LOCKED_PT_NOTE"%'
+        and l.notes like '%"externalNoteId":"SYN-LOCKED-SHOULDER-NOTE"%'
+        and ((l.cpt_code = '97110' and l.minutes = 20
+            and l.notes like '%"startTime":"2026-10-01T09:00:00Z"%'
+            and l.notes like '%"stopTime":"2026-10-01T09:20:00Z"%')
+          or (l.cpt_code = '97530' and l.minutes = 20
+            and l.notes like '%"startTime":"2026-10-01T09:20:00Z"%'
+            and l.notes like '%"stopTime":"2026-10-01T09:40:00Z"%'))) as timestamp_count
+    from encounters e left join lateral (
+      select id, status from claims where encounter_id = e.id order by version desc limit 1
+    ) c on true where e.organization_id = ${organizationId}
+      and e.external_id = 'SYN-CHART-SYN-LOCKED-SHOULDER-NOTE'`;
+  return state;
+}
+
 async function syntheticEncounter(externalId: string, patientExternalId: string, patientName: string) {
   const fixture = JSON.parse(await readFile(new URL("../../../fixtures/encounters/underbilled-40min.json", import.meta.url), "utf8"));
   fixture.externalId = externalId;
@@ -50,11 +70,25 @@ try {
   console.log(shoulder ? "Synthetic shoulder encounter already present:"
     : "Synthetic shoulder encounter ingested:", shoulder
       ? { encounterId: shoulder.id } : await ingest("shoulder-23min"));
-  const [lockedNote] = await connection.client`select id from encounters
-    where organization_id = ${organizationId} and external_id = 'SYN-CHART-SYN-LOCKED-SHOULDER-NOTE'`;
-  console.log(lockedNote ? "Synthetic locked shoulder note already present:"
-    : "Synthetic locked shoulder note ingested:", lockedNote
-      ? { encounterId: lockedNote.id } : await lockShoulderNote());
+  const lockedNote = await lockedShoulderState(connection, organizationId);
+  const editable = new Set(["DRAFT", "SCRUBBED", "BLOCKED", "SHADOWED"]);
+  if (lockedNote && lockedNote.claim_status && !editable.has(String(lockedNote.claim_status))) {
+    console.log("Synthetic locked shoulder note already submitted; leaving it intact:", {
+      encounterId: lockedNote.encounter_id, status: lockedNote.claim_status,
+    });
+  } else {
+    const healthy = lockedNote?.claim_status === "SCRUBBED" && Number(lockedNote.total_units) === 3
+      && Number(lockedNote.entry_count) === 2 && Number(lockedNote.timestamp_count) === 2;
+    if (!healthy) await lockShoulderNote();
+    const ready = await lockedShoulderState(connection, organizationId);
+    if (ready?.claim_status !== "SCRUBBED" || Number(ready.total_units) !== 3
+      || Number(ready.entry_count) !== 2 || Number(ready.timestamp_count) !== 2) {
+      throw new Error("Synthetic locked shoulder note must be SCRUBBED with two timestamped entries and three units");
+    }
+    console.log(healthy ? "Synthetic locked shoulder note already ready:"
+      : "Synthetic locked shoulder note ready:", { encounterId: ready.encounter_id,
+        status: ready.claim_status, units: Number(ready.total_units) });
+  }
   const [existing] = await connection.client`select e.id as encounter_id, c.status as claim_status,
       c.total_charge_cents as charge_cents, c.id as claim_id
     from encounters e left join lateral (

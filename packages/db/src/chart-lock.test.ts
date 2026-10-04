@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
 import { FixtureClearinghouse } from "@pt-rcm/clearinghouse";
 import type { EncounterIngestInput } from "@pt-rcm/domain";
-import { createDatabase, lockPtChartNote, scrubEncounter, submitScrubbedClaim, upsertEncounter } from "./index.js";
+import { createDatabase, lockPtChartNote, submitScrubbedClaim, upsertEncounter } from "./index.js";
 import * as s from "./schema.js";
 import { seedSyntheticData } from "./seed-database.js";
 import { seedFacility, seedOrganization, seedProviders } from "./seed-data.js";
@@ -73,13 +73,30 @@ describe.skipIf(!url)("locked PT chart note ingestion", () => {
 
   it("updates the same draft from note timestamps and refuses a repeat lock after fixture submission", async () => {
     const first = await lockPtChartNote(connection.db, organizationId, note);
-    expect(first).toMatchObject({ created: true, status: "DRAFT" });
+    expect(first).toMatchObject({ created: true, status: "SCRUBBED", totalUnits: 3 });
+    const [firstClaim] = await connection.db.select().from(s.claims).where(eq(s.claims.encounterId, first.encounterId));
+    expect(firstClaim).toMatchObject({ id: first.claimId, status: "SCRUBBED" });
+    expect(firstClaim!.snapshotJson.submission).toBeUndefined();
+    const firstLines = await connection.db.select().from(s.encounterMinuteLines)
+      .where(eq(s.encounterMinuteLines.encounterId, first.encounterId));
+    expect(firstLines.map(({ cptCode, minutes, notes }) => ({ cptCode, minutes, notes: JSON.parse(notes!) })))
+      .toEqual(expect.arrayContaining([
+        { cptCode: "97110", minutes: 20, notes: {
+          source: "SYNTHETIC_LOCKED_PT_NOTE", externalNoteId: noteId,
+          startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z",
+        } },
+        { cptCode: "97530", minutes: 20, notes: {
+          source: "SYNTHETIC_LOCKED_PT_NOTE", externalNoteId: noteId,
+          startTime: "2026-10-01T09:20:00Z", stopTime: "2026-10-01T09:40:00Z",
+        } },
+      ]));
+    expect(firstLines).toHaveLength(2);
     const changed = { ...note, timedEntries: [
       { ...note.timedEntries[0]!, stopTime: "2026-10-01T09:25:00Z" },
       { ...note.timedEntries[1]!, startTime: "2026-10-01T09:25:00Z", stopTime: "2026-10-01T09:45:00Z" },
     ] };
     const second = await lockPtChartNote(connection.db, organizationId, changed);
-    expect(second).toMatchObject({ created: false, encounterId: first.encounterId, status: "DRAFT" });
+    expect(second).toMatchObject({ created: false, encounterId: first.encounterId, status: "SCRUBBED" });
     const minutes = await connection.db.select({ cptCode: s.encounterMinuteLines.cptCode, minutes: s.encounterMinuteLines.minutes })
       .from(s.encounterMinuteLines).where(eq(s.encounterMinuteLines.encounterId, first.encounterId));
     expect(minutes).toEqual(expect.arrayContaining([
@@ -87,9 +104,7 @@ describe.skipIf(!url)("locked PT chart note ingestion", () => {
     ]));
     expect(minutes).toHaveLength(2);
 
-    const scrubbed = await scrubEncounter(connection.db, organizationId, first.encounterId);
-    expect(scrubbed.status).toBe("SCRUBBED");
-    await submitScrubbedClaim(connection.db, organizationId, scrubbed.claimId,
+    await submitScrubbedClaim(connection.db, organizationId, second.claimId,
       { adapter: "fixture", clearinghouse: new FixtureClearinghouse() });
     const before = await connection.db.select().from(s.encounterMinuteLines)
       .where(eq(s.encounterMinuteLines.encounterId, first.encounterId));
@@ -98,5 +113,19 @@ describe.skipIf(!url)("locked PT chart note ingestion", () => {
     });
     expect(await connection.db.select().from(s.encounterMinuteLines)
       .where(eq(s.encounterMinuteLines.encounterId, first.encounterId))).toEqual(before);
+  });
+
+  it("opens the existing RULE_BLOCK task when the locked note has an unbillable zero-minute service", async () => {
+    const blocked = await lockPtChartNote(connection.db, organizationId, {
+      ...note, externalNoteId: `SYN-BLOCK-${randomUUID()}`,
+      timedEntries: [{ ...note.timedEntries[0]!, stopTime: note.timedEntries[0]!.startTime }],
+    });
+    expect(blocked).toMatchObject({ status: "BLOCKED", totalUnits: 0 });
+    const [claim] = await connection.db.select().from(s.claims).where(eq(s.claims.id, blocked.claimId));
+    expect(claim?.status).toBe("BLOCKED");
+    expect(claim?.snapshotJson.submission).toBeUndefined();
+    const tasks = await connection.db.select().from(s.tasks).where(eq(s.tasks.claimId, blocked.claimId));
+    expect(tasks).toEqual([expect.objectContaining({ kind: "RULE_BLOCK", owner: "OPERATOR", status: "OPEN",
+      reason: expect.stringContaining("ZERO_MINUTES") })]);
   });
 });
