@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import {
-  buildClaimDocument, ClaimDocumentInputSchema, ClaimNotSubmittable, EncounterSchema, IdSchema,
+  buildClaimDocument, ClaimDocumentInputSchema, ClaimDocumentSchema, ClaimNotSubmittable, EncounterSchema, IdSchema,
 } from "@pt-rcm/domain";
 import type { Database } from "./index.js";
 import * as s from "./schema.js";
@@ -16,6 +16,30 @@ export class ClaimDocumentReadError extends Error {
 export async function getClaimDocument(db: Database, organizationId: string, claimId: string) {
   return db.transaction((tx) => readClaimDocument(tx, organizationId, claimId),
     { isolationLevel: "repeatable read", accessMode: "read only" });
+}
+
+/** Read the reviewed version for a synthetic 837 download, without changing a claim. */
+export async function getClaimDocumentFor837(db: Database, organizationId: string, claimId: string) {
+  IdSchema.parse(organizationId);
+  IdSchema.parse(claimId);
+  return db.transaction(async (tx) => {
+    const [row] = await tx.select({ claim: s.claims }).from(s.claims)
+      .innerJoin(s.encounters, eq(s.encounters.id, s.claims.encounterId))
+      .where(and(eq(s.claims.id, claimId), eq(s.encounters.organizationId, organizationId)));
+    if (!row) throw new ClaimDocumentReadError(404, "CLAIM_NOT_FOUND", "Claim not found in this organization");
+    const { claim } = row;
+    if (["DRAFT", "BLOCKED", "SHADOWED"].includes(claim.status)) throw new ClaimNotSubmittable(claim.status);
+    if (claim.status === "SCRUBBED") return readClaimDocument(tx, organizationId, claimId);
+    // Later lifecycle states retain the exact document sent to the fixture.
+    // Current draft lines may have changed during a denied correction.
+    const submission = claim.snapshotJson.submission;
+    const saved = submission && typeof submission === "object" && !Array.isArray(submission)
+      ? ClaimDocumentSchema.safeParse(submission.document) : null;
+    if (!saved?.success || saved.data.claimId !== claim.id || saved.data.claimVersion !== claim.version) {
+      throw new ClaimDocumentReadError(422, "SUBMISSION_DOCUMENT_UNAVAILABLE", "Saved submission document is unavailable");
+    }
+    return saved.data;
+  }, { isolationLevel: "repeatable read", accessMode: "read only" });
 }
 
 /** Reuse the same document validation inside a caller-owned submission transaction. */

@@ -127,6 +127,12 @@ td a { font-weight: 600; }
 .empty-state h1 { margin-bottom: 10px; }
 .empty-state > a { display: inline-block; margin-top: 14px; }
 .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+.download-action {
+  display: inline-flex; align-items: center; min-height: 36px; padding: 8px 12px;
+  border: 1px solid var(--line-strong); border-radius: 6px; background: #102337;
+  color: #d9f2ff; font-weight: 600; text-decoration: none; white-space: nowrap;
+}
+.download-action:hover { color: #d9f2ff; background: #173d57; border-color: #71dfff; }
 .action-form { max-width: 340px; }
 .action-hint, .action-feedback { margin-top: 6px; font-size: 16px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
 .action-feedback { color: #86e5c2; }

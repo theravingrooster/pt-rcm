@@ -27,11 +27,15 @@ export default async function ClaimPage({ params }: { params: Promise<{ id: stri
     invoice = invoiceResult.data;
   }
   const corrected = Array.isArray(claim.snapshotJson.submissionHistory) && claim.snapshotJson.submissionHistory.length > 0;
+  const canDownloadSynthetic837 = document.json !== null && ["SCRUBBED", "SUBMITTED", "ACCEPTED", "REJECTED", "DENIED", "PATIENT_BALANCE", "PAID"].includes(claim.status);
   return <>
     <p className="breadcrumb"><Link href="/claims">Claims</Link> / <Link href={`/encounters/${encounter.id}`}>{encounter.externalId}</Link> / Claim v{claim.version}</p>
     <div className="page-heading"><div><p className="eyebrow">Claim v{claim.version}</p><h1>{patient.firstName} {patient.lastName}</h1><p className="muted mono">{claim.id}</p></div>
       <div className="actions"><ActionForm action="submit" endpoint={`/api/claims/${claim.id}/submit`} label={corrected ? "Resubmit claim (fixture)" : "Submit claim (fixture)"} primary disabledReason={fixtureDisabledReason() ?? (claim.status === "SCRUBBED" ? undefined : "A SCRUBBED claim is required.")} />
-        <ActionForm action="poll" endpoint="/api/remits/poll" label="Poll remits (fixture)" disabledReason={fixtureDisabledReason()} /></div>
+        <ActionForm action="poll" endpoint="/api/remits/poll" label="Poll remits (fixture)" disabledReason={fixtureDisabledReason()} />
+        {canDownloadSynthetic837
+          ? <Link className="download-action" href={`/api/claims/${claim.id}/837`} download={`synthetic-837p-${claim.id}.txt`}>Download synthetic 837P (.txt)</Link>
+          : <button type="button" disabled title="A SCRUBBED or later claim document is required.">Download synthetic 837P (.txt)</button>}</div>
     </div>
     <dl className="facts"><div><dt>Status</dt><dd><Badge value={claim.status} /></dd></div><div><dt>Date of service</dt><dd>{encounter.dateOfService}</dd></div><div><dt>Payer</dt><dd>{payer.name}</dd></div>
       <div><dt>Claim charge</dt><dd>{money(claim.totalChargeCents)}</dd></div><div className="wide"><dt>ICN</dt><dd className="mono">{icn ?? "Not submitted"}</dd></div></dl>
