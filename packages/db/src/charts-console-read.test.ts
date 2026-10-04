@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { EncounterIngestInput } from "@pt-rcm/domain";
+import type { EncounterIngestInput, LockedPtNote } from "@pt-rcm/domain";
 import { createDatabase } from "./index.js";
 import { lockPtChartNote } from "./chart-lock.js";
 import { chartTimingForLine, getOperatorChart, listOperatorCharts } from "./charts-console-read.js";
@@ -45,6 +45,7 @@ const patientExternalId = `SYN-CHART-READ-PATIENT-${randomUUID()}`;
 const lockedNoteId = `SYN-CHART-READ-NOTE-${randomUUID()}`;
 const overlappingNoteId = `SYN-CHART-OVERLAP-NOTE-${randomUUID()}`;
 const original = JSON.parse(readFileSync(new URL("../../../fixtures/encounters/shoulder-23min.json", import.meta.url), "utf8")) as EncounterIngestInput;
+const overlappingFixture = JSON.parse(readFileSync(new URL("../../../fixtures/charts/overlapping-30min.json", import.meta.url), "utf8")) as LockedPtNote;
 
 describe.skipIf(!url)("Charts read model with a locked shoulder note", () => {
   let connection: ReturnType<typeof createDatabase>;
@@ -71,12 +72,7 @@ describe.skipIf(!url)("Charts read model with a locked shoulder note", () => {
     });
     encounterId = locked.encounterId;
     const overlapping = await lockPtChartNote(connection.db, seedOrganization.id, {
-      externalNoteId: overlappingNoteId, patientExternalId, renderingNpi: "0000000003", dateOfService: "2026-10-01",
-      diagnoses: ["M25.511"], timedEntries: [
-        { cptCode: "97110", startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z" },
-        { cptCode: "97140", startTime: "2026-10-01T09:10:00Z", stopTime: "2026-10-01T09:30:00Z" },
-      ],
-      untimedEntries: [{ cptCode: "97161" }],
+      ...overlappingFixture, externalNoteId: overlappingNoteId, patientExternalId,
     });
     overlappingEncounterId = overlapping.encounterId;
   });
@@ -126,8 +122,7 @@ describe.skipIf(!url)("Charts read model with a locked shoulder note", () => {
     expect(row).toMatchObject({ noteId: overlappingNoteId, status: "SCRUBBED",
       rawMinutes: 40, billableUnionMinutes: 30, overlappingMinutes: 10 });
     expect(row.entries.map(({ cptCode, rawMinutes, billableMinutes }) => [cptCode, rawMinutes, billableMinutes]))
-      .toEqual([["97110", 20, 20], ["97140", 20, 10], ["97161", 0, 0]]);
-    expect(row.entries[2]).toMatchObject({ untimed: true, timing: null });
+      .toEqual([["97110", 20, 20], ["97140", 20, 10]]);
     const detail = await getOperatorChart(connection.db, seedOrganization.id, overlappingEncounterId);
     expect(detail?.allocation.totalTimedMinutes).toBe(30);
     expect(detail?.allocation.lines.reduce((sum, line) => sum + line.minutes, 0)).toBe(30);

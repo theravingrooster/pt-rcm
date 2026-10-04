@@ -1,11 +1,14 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { LockedPtNote } from "@pt-rcm/domain";
 import { loadOperatorData } from "../_lib/server.js";
 import ChartsPage from "./page.js";
 
 vi.mock("../_lib/server.js", () => ({ loadOperatorData: vi.fn() }));
 
 const encounterId = "00000000-0000-4000-8000-000000000071";
+const overlappingFixture = JSON.parse(readFileSync(new URL("../../../../fixtures/charts/overlapping-30min.json", import.meta.url), "utf8")) as LockedPtNote;
 const row = {
   noteId: "SYN-SHOULDER-LOCK", patient: { externalId: "SYN-PATIENT-1" },
   encounter: { id: encounterId, dateOfService: "2026-10-01", status: "DRAFT" },
@@ -32,22 +35,33 @@ describe("Charts page", () => {
     expect(html).toContain("v2");
     expect(html).toContain("Raw minutes");
     expect(html).toContain("Billable union");
+    expect(html).not.toContain("OVERLAPPING_MINUTES");
     expect(html).not.toContain("DRAFT");
     expect(html).not.toContain("Encounter:");
     expect(html).toMatch(/<td class="number">40<\/td>/);
     expect(html).toMatch(/<td class="number">3<\/td>/);
   });
 
-  it("shows the overlap finding and 40 raw versus 30 billable minutes", async () => {
-    vi.mocked(loadOperatorData).mockResolvedValue({ ok: true, data: [{ ...row,
+  it("shows the overlap finding only on the overlapping row", async () => {
+    vi.mocked(loadOperatorData).mockResolvedValue({ ok: true, data: [row, { ...row,
+      noteId: overlappingFixture.externalNoteId,
+      encounter: { ...row.encounter, id: "00000000-0000-4000-8000-000000000073" },
       rawMinutes: 40, billableUnionMinutes: 30, overlappingMinutes: 10, units: 2,
-      entries: [row.entries[0], { ...row.entries[1], cptCode: "97140", minutes: 10, billableMinutes: 10 }],
+      entries: [row.entries[0], { ...row.entries[1], cptCode: overlappingFixture.timedEntries[1]!.cptCode,
+        minutes: 10, billableMinutes: 10,
+        timing: { startTime: overlappingFixture.timedEntries[1]!.startTime,
+          stopTime: overlappingFixture.timedEntries[1]!.stopTime } }],
     }] } as never);
     const html = renderToStaticMarkup(await ChartsPage());
-    expect(html).toContain("97110 · 20 min");
-    expect(html).toContain("97140 · 20 min");
-    expect(html).toContain("OVERLAPPING_MINUTES");
-    expect(html).toMatch(/<td class="number">40<\/td><td class="number">30<\/td>/);
+    const rows = html.match(/<tr>[\s\S]*?<\/tr>/g) ?? [];
+    const sequential = rows.find((item) => item.includes("SYN-SHOULDER-LOCK"));
+    const overlapping = rows.find((item) => item.includes(overlappingFixture.externalNoteId));
+    expect(sequential).toContain("97530 · 20 min");
+    expect(sequential).toMatch(/<td class="number">40<\/td><td class="number">40<\/td>/);
+    expect(sequential).not.toContain("OVERLAPPING_MINUTES");
+    expect(overlapping).toContain("97140 · 20 min");
+    expect(overlapping).toMatch(/<td class="number">40<\/td><td class="number">30<\/td>/);
+    expect(overlapping).toContain("OVERLAPPING_MINUTES");
   });
 
   it("shows DRAFT only when no claim has been created", async () => {

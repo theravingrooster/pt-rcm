@@ -34,6 +34,7 @@ describe("locked chart detail", () => {
     expect(html).toContain(`/claims/${claimId}`);
     expect(html).toContain("SCRUBBED");
     expect(html).toContain("Billable union");
+    expect(html).not.toContain("OVERLAPPING_MINUTES");
     expect(html).not.toContain("Encounter: DRAFT");
   });
 
