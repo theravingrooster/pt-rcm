@@ -10,9 +10,10 @@ const row = {
   noteId: "SYN-SHOULDER-LOCK", patient: { externalId: "SYN-PATIENT-1" },
   encounter: { id: encounterId, dateOfService: "2026-10-01", status: "DRAFT" },
   claim: { status: "SCRUBBED", version: 2 }, status: "SCRUBBED", units: 3,
+  rawMinutes: 40, billableUnionMinutes: 40, overlappingMinutes: 0,
   entries: [
-    { id: "line-1", cptCode: "97110", minutes: 20, timing: { startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z" } },
-    { id: "line-2", cptCode: "97530", minutes: 20, timing: { startTime: "2026-10-01T09:20:00Z", stopTime: "2026-10-01T09:40:00Z" } },
+    { id: "line-1", cptCode: "97110", minutes: 20, rawMinutes: 20, billableMinutes: 20, timing: { startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z" } },
+    { id: "line-2", cptCode: "97530", minutes: 20, rawMinutes: 20, billableMinutes: 20, timing: { startTime: "2026-10-01T09:20:00Z", stopTime: "2026-10-01T09:40:00Z" } },
   ],
 };
 
@@ -29,10 +30,24 @@ describe("Charts page", () => {
     expect(html).toContain("97530 · 20 min");
     expect(html).toContain("SCRUBBED");
     expect(html).toContain("v2");
+    expect(html).toContain("Raw minutes");
+    expect(html).toContain("Billable union");
     expect(html).not.toContain("DRAFT");
     expect(html).not.toContain("Encounter:");
     expect(html).toMatch(/<td class="number">40<\/td>/);
     expect(html).toMatch(/<td class="number">3<\/td>/);
+  });
+
+  it("shows the overlap finding and 40 raw versus 30 billable minutes", async () => {
+    vi.mocked(loadOperatorData).mockResolvedValue({ ok: true, data: [{ ...row,
+      rawMinutes: 40, billableUnionMinutes: 30, overlappingMinutes: 10, units: 2,
+      entries: [row.entries[0], { ...row.entries[1], cptCode: "97140", minutes: 10, billableMinutes: 10 }],
+    }] } as never);
+    const html = renderToStaticMarkup(await ChartsPage());
+    expect(html).toContain("97110 · 20 min");
+    expect(html).toContain("97140 · 20 min");
+    expect(html).toContain("OVERLAPPING_MINUTES");
+    expect(html).toMatch(/<td class="number">40<\/td><td class="number">30<\/td>/);
   });
 
   it("shows DRAFT only when no claim has been created", async () => {

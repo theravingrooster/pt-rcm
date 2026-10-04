@@ -29,7 +29,8 @@ describe("POST /api/charts/lock", () => {
   beforeEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });
 
   it.each([[true, 201], [false, 200]] as const)("returns only encounter ID when created=%s", async (created, status) => {
-    vi.mocked(lockPtChartNote).mockResolvedValue({ encounterId, patientId: encounterId, created, status: "SCRUBBED", claimId, totalUnits: 3 });
+    vi.mocked(lockPtChartNote).mockResolvedValue({ encounterId, patientId: encounterId, created, status: "SCRUBBED", claimId,
+      totalUnits: 3, rawTotalMinutes: 40, billableUnionMinutes: 40, overlapMinutes: 0, flags: [] });
     const response = await POST(request());
     expect(response.status).toBe(status);
     expect(await response.json()).toEqual({ encounterId });
@@ -39,9 +40,23 @@ describe("POST /api/charts/lock", () => {
   it("uses a server-scoped organization rather than input", async () => {
     const organizationId = "00000000-0000-4000-8000-000000000999";
     vi.stubEnv("INGEST_ORGANIZATION_ID", organizationId);
-    vi.mocked(lockPtChartNote).mockResolvedValue({ encounterId, patientId: encounterId, created: true, status: "SCRUBBED", claimId, totalUnits: 3 });
+    vi.mocked(lockPtChartNote).mockResolvedValue({ encounterId, patientId: encounterId, created: true, status: "SCRUBBED", claimId,
+      totalUnits: 3, rawTotalMinutes: 40, billableUnionMinutes: 40, overlapMinutes: 0, flags: [] });
     await POST(request());
     expect(lockPtChartNote).toHaveBeenCalledWith({}, organizationId, note);
+  });
+
+  it("flags overlapping minutes and reports both raw and billable totals", async () => {
+    vi.mocked(lockPtChartNote).mockResolvedValue({ encounterId, patientId: encounterId, created: true,
+      status: "SCRUBBED", claimId, totalUnits: 2, rawTotalMinutes: 40, billableUnionMinutes: 30,
+      overlapMinutes: 10, flags: ["OVERLAPPING_MINUTES"] });
+    const response = await POST(request({ ...note, timedEntries: [
+      note.timedEntries[0],
+      { cptCode: "97140", startTime: "2026-10-01T09:10:00Z", stopTime: "2026-10-01T09:30:00Z" },
+    ] }));
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ encounterId, flags: ["OVERLAPPING_MINUTES"],
+      rawTotalMinutes: 40, billableUnionMinutes: 30 });
   });
 
   it.each([

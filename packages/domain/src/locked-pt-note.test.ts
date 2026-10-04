@@ -3,9 +3,10 @@ import { describe, expect, it } from "vitest";
 import { allocateUnits } from "./eightMinute.js";
 import { loadMedicareMinuteLadder } from "./fixtures/index.js";
 import { type EncounterIngestInput } from "./encounter-ingest.js";
-import { LockedPtNoteSchema, lockedPtNoteToEncounterInput } from "./locked-pt-note.js";
+import { analyzeLockedPtNoteIntervals, LockedPtNoteSchema, lockedPtNoteToEncounterInput } from "./locked-pt-note.js";
 
 const shoulder = JSON.parse(readFileSync(new URL("../../../fixtures/encounters/shoulder-23min.json", import.meta.url), "utf8")) as EncounterIngestInput;
+const overlapping = JSON.parse(readFileSync(new URL("../../../fixtures/charts/overlapping-30min.json", import.meta.url), "utf8")) as typeof note;
 const context = { patient: shoulder.patient, facilityId: shoulder.facilityId, planOfCare: shoulder.planOfCare };
 
 // CPT is AMA-licensed. These two procedure codes are from the local fixture only.
@@ -23,6 +24,12 @@ const note = {
 
 describe("locked synthetic PT note", () => {
   it("derives 20 + 20 minutes solely from timestamps and leaves billing allocation to the existing model", () => {
+    expect(analyzeLockedPtNoteIntervals(note)).toMatchObject({
+      rawTotalMinutes: 40,
+      billableUnionMinutes: 40,
+      overlapMinutes: 0,
+      lines: [{ rawMinutes: 20, billableMinutes: 20 }, { rawMinutes: 20, billableMinutes: 20 }],
+    });
     const result = lockedPtNoteToEncounterInput(note, context);
     expect(result).toMatchObject({
       externalId: "SYN-CHART-SYN-SHOULDER-NOTE-1",
@@ -34,6 +41,94 @@ describe("locked synthetic PT note", () => {
     expect("units" in result.minuteLines[0]!).toBe(false);
     const allocation = allocateUnits(result.minuteLines.map((line) => ({ ...line, timed: true })), loadMedicareMinuteLadder());
     expect(allocation.totalUnits).toBe(3);
+  });
+
+  it("credits only the 30-minute union of overlapping intervals to encounter lines and the allocator", () => {
+    const analysis = analyzeLockedPtNoteIntervals(overlapping);
+    expect(analysis).toMatchObject({
+      rawTotalMinutes: 40,
+      billableUnionMinutes: 30,
+      overlapMinutes: 10,
+      lines: [
+        { cptCode: "97110", rawMinutes: 20, billableMinutes: 20 },
+        { cptCode: "97140", rawMinutes: 20, billableMinutes: 10 },
+      ],
+    });
+    const encounter = lockedPtNoteToEncounterInput(overlapping, context);
+    expect(encounter.minuteLines).toEqual([
+      { cptCode: "97110", minutes: 20 },
+      { cptCode: "97140", minutes: 10 },
+    ]);
+    const allocation = allocateUnits(encounter.minuteLines.map((line) => ({ ...line, timed: true })), loadMedicareMinuteLadder());
+    expect(allocation.totalTimedMinutes).toBe(30);
+    expect(allocation.totalUnits).toBe(2);
+  });
+
+  it("credits an entirely contained interval zero even when it appears first", () => {
+    const reversed = { ...overlapping, timedEntries: [
+      { cptCode: "97140", startTime: "2026-10-01T09:10:00Z", stopTime: "2026-10-01T09:15:00Z" },
+      { cptCode: "97110", startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z" },
+    ] };
+    expect(analyzeLockedPtNoteIntervals(reversed)).toMatchObject({
+      rawTotalMinutes: 25,
+      billableUnionMinutes: 20,
+      overlapMinutes: 5,
+      lines: [{ billableMinutes: 0 }, { billableMinutes: 20 }],
+    });
+    expect(lockedPtNoteToEncounterInput(reversed, context).minuteLines.map((line) => line.minutes)).toEqual([0, 20]);
+  });
+
+  it("credits the longer interval first when two entries share a start", () => {
+    const sameStart = { ...overlapping, timedEntries: [
+      { cptCode: "97140", startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:10:00Z" },
+      { cptCode: "97110", startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z" },
+    ] };
+    expect(analyzeLockedPtNoteIntervals(sameStart)).toMatchObject({
+      rawTotalMinutes: 30,
+      billableUnionMinutes: 20,
+      lines: [{ billableMinutes: 0 }, { billableMinutes: 20 }],
+    });
+  });
+
+  it("counts the union across multiple overlaps and gaps", () => {
+    const intervals = { ...overlapping, timedEntries: [
+      { cptCode: "97110", startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:10:00Z" },
+      { cptCode: "97140", startTime: "2026-10-01T09:05:00Z", stopTime: "2026-10-01T09:25:00Z" },
+      { cptCode: "97530", startTime: "2026-10-01T09:15:00Z", stopTime: "2026-10-01T09:30:00Z" },
+      { cptCode: "97112", startTime: "2026-10-01T09:40:00Z", stopTime: "2026-10-01T09:48:00Z" },
+    ] };
+    expect(analyzeLockedPtNoteIntervals(intervals)).toMatchObject({
+      rawTotalMinutes: 53,
+      billableUnionMinutes: 38,
+      overlapMinutes: 15,
+      lines: [{ billableMinutes: 10 }, { billableMinutes: 15 }, { billableMinutes: 5 }, { billableMinutes: 8 }],
+    });
+  });
+
+  it("excludes an untimed evaluation from the union and keeps its independent unit", () => {
+    const withEvaluation = { ...overlapping, untimedEntries: [{ cptCode: "97161" }] };
+    expect(analyzeLockedPtNoteIntervals(withEvaluation)).toMatchObject({
+      rawTotalMinutes: 40,
+      billableUnionMinutes: 30,
+      overlapMinutes: 10,
+      lines: [{ billableMinutes: 20 }, { billableMinutes: 10 }],
+    });
+    const encounter = lockedPtNoteToEncounterInput(withEvaluation, context);
+    expect(encounter.minuteLines).toEqual([
+      { cptCode: "97110", minutes: 20 },
+      { cptCode: "97140", minutes: 10 },
+      { cptCode: "97161", minutes: 0 },
+    ]);
+    const allocation = allocateUnits(encounter.minuteLines.map((line) => ({
+      ...line, timed: line.cptCode !== "97161",
+    })), loadMedicareMinuteLadder());
+    expect(allocation.totalTimedMinutes).toBe(30);
+    expect(allocation.totalUnits).toBe(3);
+  });
+
+  it("rejects timed CPTs in untimed entries and caller-supplied minutes", () => {
+    expect(LockedPtNoteSchema.safeParse({ ...note, untimedEntries: [{ cptCode: "97110" }] }).success).toBe(false);
+    expect(LockedPtNoteSchema.safeParse({ ...note, untimedEntries: [{ cptCode: "97161", minutes: 20 }] }).success).toBe(false);
   });
 
   it.each([

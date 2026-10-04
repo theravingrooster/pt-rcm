@@ -7,7 +7,7 @@ import * as s from "./schema.js";
 const chartPrefix = "SYN-CHART-";
 
 /** Preserve recorded chart times only when they belong to this saved minute line. */
-export function chartTimingForLine(notes: string | null, noteId: string, minutes: number) {
+export function chartTimingForLine(notes: string | null, noteId: string, billableMinutes: number) {
   if (!notes) return null;
   try {
     const value: unknown = JSON.parse(notes);
@@ -18,11 +18,46 @@ export function chartTimingForLine(notes: string | null, noteId: string, minutes
       || !data.startTime.endsWith("Z") || !data.stopTime.endsWith("Z")) return null;
     const start = Date.parse(data.startTime);
     const stop = Date.parse(data.stopTime);
-    if (!Number.isFinite(start) || !Number.isFinite(stop) || stop - start !== minutes * 60_000) return null;
-    return { startTime: data.startTime, stopTime: data.stopTime };
+    if (!Number.isFinite(start) || !Number.isFinite(stop) || stop < start || (stop - start) % 60_000 !== 0) return null;
+    const rawMinutes = (stop - start) / 60_000;
+    // Older chart locks recorded only start/stop; their computed minutes were
+    // the billable minutes. New locks retain the overlap deduction explicitly.
+    if (data.rawMinutes === undefined && data.overlapMinutes === undefined && data.billableMinutes === undefined) {
+      if (rawMinutes !== billableMinutes) return null;
+    } else if (data.rawMinutes !== rawMinutes || data.billableMinutes !== billableMinutes
+      || data.overlapMinutes !== rawMinutes - billableMinutes || rawMinutes < billableMinutes) return null;
+    return { startTime: data.startTime, stopTime: data.stopTime, rawMinutes };
   } catch {
     return null;
   }
+}
+
+function chartUntimedForLine(notes: string | null, noteId: string, minutes: number, timed: boolean) {
+  if (!notes || timed || minutes !== 0) return false;
+  try {
+    const data: unknown = JSON.parse(notes);
+    return !!data && typeof data === "object" && !Array.isArray(data)
+      && (data as Record<string, unknown>).source === "SYNTHETIC_LOCKED_PT_NOTE"
+      && (data as Record<string, unknown>).externalNoteId === noteId
+      && (data as Record<string, unknown>).untimed === true;
+  } catch {
+    return false;
+  }
+}
+
+function chartEntries<T extends { notes: string | null; minutes: number; timed: boolean }>(lines: T[], noteId: string) {
+  return lines.map((line) => {
+    const untimed = chartUntimedForLine(line.notes, noteId, line.minutes, line.timed);
+    const timing = line.timed ? chartTimingForLine(line.notes, noteId, line.minutes) : null;
+    return { ...line, untimed, timing, rawMinutes: line.timed ? timing?.rawMinutes ?? line.minutes : 0,
+      billableMinutes: line.timed ? line.minutes : 0 };
+  });
+}
+
+function chartTotals(entries: ReturnType<typeof chartEntries>) {
+  const rawMinutes = entries.reduce((sum, line) => sum + line.rawMinutes, 0);
+  const billableUnionMinutes = entries.reduce((sum, line) => sum + line.billableMinutes, 0);
+  return { rawMinutes, billableUnionMinutes, overlappingMinutes: rawMinutes - billableUnionMinutes };
 }
 
 function noteIdFor(externalId: string) {
@@ -40,10 +75,8 @@ export async function listOperatorCharts(db: Database, organizationId: string) {
     .orderBy(s.encounterMinuteLines.cptCode, s.encounterMinuteLines.id);
   return rows.map((row) => {
     const noteId = noteIdFor(row.encounter.externalId)!;
-    const entries = minuteLines.filter((line) => line.encounterId === row.encounter.id).map((line) => ({
-      ...line, timing: chartTimingForLine(line.notes, noteId, line.minutes),
-    }));
-    return { ...row, noteId, entries, status: row.claim?.status ?? "DRAFT" };
+    const entries = chartEntries(minuteLines.filter((line) => line.encounterId === row.encounter.id), noteId);
+    return { ...row, noteId, entries, ...chartTotals(entries), status: row.claim?.status ?? "DRAFT" };
   });
 }
 
@@ -52,7 +85,6 @@ export async function getOperatorChart(db: Database, organizationId: string, enc
   const row = await getOperatorEncounter(db, organizationId, encounterId);
   const noteId = row ? noteIdFor(row.encounter.externalId) : null;
   if (!row || noteId === null) return null;
-  return { ...row, noteId, entries: row.minuteLines.map((line) => ({
-    ...line, timing: chartTimingForLine(line.notes, noteId, line.minutes),
-  })), status: row.latestClaim?.status ?? "DRAFT" };
+  const entries = chartEntries(row.minuteLines, noteId);
+  return { ...row, noteId, entries, ...chartTotals(entries), status: row.latestClaim?.status ?? "DRAFT" };
 }

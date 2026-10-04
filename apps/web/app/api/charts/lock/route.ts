@@ -24,7 +24,12 @@ export async function POST(request: Request): Promise<Response> {
     connection ??= createDatabase(process.env.DATABASE_URL ?? "postgres://pt:pt@localhost:5432/pt_rcm");
     const result = await lockPtChartNote(connection.db,
       process.env.INGEST_ORGANIZATION_ID ?? DEFAULT_INGEST_ORGANIZATION_ID, parsed.data);
-    return Response.json({ encounterId: result.encounterId }, { status: result.created ? 201 : 200, headers });
+    return Response.json({ encounterId: result.encounterId,
+      ...(result.overlapMinutes > 0 ? {
+        flags: result.flags, rawTotalMinutes: result.rawTotalMinutes,
+        billableUnionMinutes: result.billableUnionMinutes,
+      } : {}),
+    }, { status: result.created ? 201 : 200, headers });
   } catch (error) {
     if (error instanceof ChartLockError || error instanceof EncounterIngestError || error instanceof EncounterScrubError) {
       return Response.json({ error: error.code, message: error.message }, { status: error.status, headers });

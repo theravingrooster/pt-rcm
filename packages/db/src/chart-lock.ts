@@ -1,5 +1,6 @@
 import { and, desc, eq, lte } from "drizzle-orm";
-import { lockedPtNoteToEncounterInput, LockedPtNoteSchema, type LockedPtNote } from "@pt-rcm/domain";
+import { analyzeLockedPtNoteIntervals, lockedPtNoteToEncounterInput, LockedPtNoteSchema,
+  type LockedPtNote } from "@pt-rcm/domain";
 import type { Database } from "./index.js";
 import { upsertEncounter } from "./encounter-ingest.js";
 import { scrubEncounter } from "./encounter-scrub.js";
@@ -16,6 +17,7 @@ export class ChartLockError extends Error {
 /** Resolve fixture demographic and coverage context, then use the normal encounter ingest path. */
 export async function lockPtChartNote(db: Database, organizationId: string, input: LockedPtNote) {
   const note = LockedPtNoteSchema.parse(input);
+  const intervals = analyzeLockedPtNoteIntervals(note);
   return db.transaction(async (tx) => {
     const [patient] = await tx.select().from(s.patients).where(and(
       eq(s.patients.organizationId, organizationId), eq(s.patients.externalId, note.patientExternalId),
@@ -71,6 +73,10 @@ export async function lockPtChartNote(db: Database, organizationId: string, inpu
     const stored = await upsertEncounter(tx as unknown as Database, organizationId, encounter,
       { source: "chart", lockedNote: note });
     const scrubbed = await scrubEncounter(tx as unknown as Database, organizationId, stored.encounterId);
-    return { ...stored, status: scrubbed.status, claimId: scrubbed.claimId, totalUnits: scrubbed.totalUnits };
+    return { ...stored, status: scrubbed.status, claimId: scrubbed.claimId, totalUnits: scrubbed.totalUnits,
+      rawTotalMinutes: intervals.rawTotalMinutes, billableUnionMinutes: intervals.billableUnionMinutes,
+      overlapMinutes: intervals.overlapMinutes,
+      flags: intervals.overlapMinutes > 0 ? ["OVERLAPPING_MINUTES" as const] : [],
+    };
   });
 }

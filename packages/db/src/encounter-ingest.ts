@@ -1,5 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
-import { EncounterIngestSchema, IdSchema, getCptFixture, type EncounterIngestResult, type LockedPtNote } from "@pt-rcm/domain";
+import { analyzeLockedPtNoteIntervals, EncounterIngestSchema, IdSchema, getCptFixture,
+  type EncounterIngestResult, type LockedPtNote } from "@pt-rcm/domain";
 import type { Database } from "./index.js";
 import * as s from "./schema.js";
 import { seedOrganization, seedPayers } from "./seed-data.js";
@@ -27,12 +28,15 @@ export async function upsertEncounter(db: Database, organizationId: string, inpu
   if (data.externalId.startsWith("SYN-CHART-") !== (options?.source === "chart")) {
     throw new EncounterIngestError(422, "CHART_SOURCE_REQUIRED", "Chart encounters require a locked synthetic note");
   }
+  const chartIntervals = options ? analyzeLockedPtNoteIntervals(options.lockedNote) : null;
+  const untimedEntries = options?.lockedNote.untimedEntries ?? [];
   if (options && (data.externalId !== `SYN-CHART-${options.lockedNote.externalNoteId}`
-    || data.minuteLines.length !== options.lockedNote.timedEntries.length
+    || data.minuteLines.length !== chartIntervals!.lines.length + untimedEntries.length
     || data.minuteLines.some((line, index) => {
-      const entry = options.lockedNote.timedEntries[index]!;
-      return line.cptCode !== entry.cptCode
-        || line.minutes !== (Date.parse(entry.stopTime) - Date.parse(entry.startTime)) / 60_000;
+      const source = chartIntervals!.lines[index];
+      if (source) return line.cptCode !== source.cptCode || line.minutes !== source.billableMinutes;
+      const untimed = untimedEntries[index - chartIntervals!.lines.length];
+      return line.cptCode !== untimed?.cptCode || line.minutes !== 0;
     }))) {
     throw new EncounterIngestError(422, "CHART_SOURCE_MISMATCH", "Chart minutes must match locked note times");
   }
@@ -132,7 +136,13 @@ export async function upsertEncounter(db: Database, organizationId: string, inpu
     if (data.minuteLines.length) await tx.insert(s.encounterMinuteLines).values(data.minuteLines.map((line, index) => ({
       ...line, encounterId: encounter.id, timed: getCptFixture(line.cptCode)!.timed,
       notes: options ? JSON.stringify({ source: "SYNTHETIC_LOCKED_PT_NOTE", externalNoteId: options.lockedNote.externalNoteId,
-        startTime: options.lockedNote.timedEntries[index]!.startTime, stopTime: options.lockedNote.timedEntries[index]!.stopTime }) : null,
+        ...(chartIntervals!.lines[index] ? {
+          startTime: chartIntervals!.lines[index]!.startTime, stopTime: chartIntervals!.lines[index]!.stopTime,
+          rawMinutes: chartIntervals!.lines[index]!.rawMinutes,
+          billableMinutes: chartIntervals!.lines[index]!.billableMinutes,
+          overlapMinutes: chartIntervals!.lines[index]!.rawMinutes - chartIntervals!.lines[index]!.billableMinutes,
+        } : { untimed: true }),
+      }) : null,
     })));
     if (data.diagnoses.length) await tx.insert(s.diagnoses).values(data.diagnoses.map((icd10, pointer) => ({
       encounterId: encounter.id, icd10, pointer, primary: pointer === 0,

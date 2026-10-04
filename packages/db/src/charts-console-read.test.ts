@@ -18,7 +18,7 @@ const timing = { source: "SYNTHETIC_LOCKED_PT_NOTE", externalNoteId: noteId,
 describe("locked chart timing read model", () => {
   it("shows only validated recorded times that produce the saved computed minutes", () => {
     expect(chartTimingForLine(JSON.stringify(timing), noteId, 20)).toEqual({
-      startTime: timing.startTime, stopTime: timing.stopTime,
+      startTime: timing.startTime, stopTime: timing.stopTime, rawMinutes: 20,
     });
     expect(chartTimingForLine(JSON.stringify(timing), noteId, 19)).toBeNull();
     expect(chartTimingForLine(JSON.stringify(timing), "SYN-OTHER", 20)).toBeNull();
@@ -28,17 +28,29 @@ describe("locked chart timing read model", () => {
     JSON.stringify({ ...timing, source: "UNKNOWN" })])("does not invent times for missing or malformed metadata: %s", (notes) => {
     expect(chartTimingForLine(notes, noteId, 20)).toBeNull();
   });
+
+  it("keeps the full recorded interval while validating overlap credit", () => {
+    const notes = JSON.stringify({ ...timing, rawMinutes: 20, billableMinutes: 10, overlapMinutes: 10 });
+    expect(chartTimingForLine(notes, noteId, 10)).toEqual({
+      startTime: timing.startTime, stopTime: timing.stopTime, rawMinutes: 20,
+    });
+    expect(chartTimingForLine(notes, noteId, 20)).toBeNull();
+    expect(chartTimingForLine(JSON.stringify({ ...timing, rawMinutes: 20, billableMinutes: 10,
+      overlapMinutes: 9 }), noteId, 10)).toBeNull();
+  });
 });
 
 const url = process.env.TEST_DATABASE_URL;
 const patientExternalId = `SYN-CHART-READ-PATIENT-${randomUUID()}`;
 const lockedNoteId = `SYN-CHART-READ-NOTE-${randomUUID()}`;
+const overlappingNoteId = `SYN-CHART-OVERLAP-NOTE-${randomUUID()}`;
 const original = JSON.parse(readFileSync(new URL("../../../fixtures/encounters/shoulder-23min.json", import.meta.url), "utf8")) as EncounterIngestInput;
 
 describe.skipIf(!url)("Charts read model with a locked shoulder note", () => {
   let connection: ReturnType<typeof createDatabase>;
   let patientId: string;
   let encounterId: string;
+  let overlappingEncounterId: string;
   let baseEncounterId: string;
 
   beforeAll(async () => {
@@ -58,13 +70,22 @@ describe.skipIf(!url)("Charts read model with a locked shoulder note", () => {
       ],
     });
     encounterId = locked.encounterId;
+    const overlapping = await lockPtChartNote(connection.db, seedOrganization.id, {
+      externalNoteId: overlappingNoteId, patientExternalId, renderingNpi: "0000000003", dateOfService: "2026-10-01",
+      diagnoses: ["M25.511"], timedEntries: [
+        { cptCode: "97110", startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z" },
+        { cptCode: "97140", startTime: "2026-10-01T09:10:00Z", stopTime: "2026-10-01T09:30:00Z" },
+      ],
+      untimedEntries: [{ cptCode: "97161" }],
+    });
+    overlappingEncounterId = overlapping.encounterId;
   });
 
   afterAll(async () => {
     if (!connection) return;
     try {
       if (patientId) await connection.db.transaction(async (tx) => {
-        const encounterIds = [baseEncounterId, encounterId].filter(Boolean);
+        const encounterIds = [baseEncounterId, encounterId, overlappingEncounterId].filter(Boolean);
         const claims = await tx.select({ id: s.claims.id }).from(s.claims).where(inArray(s.claims.encounterId, encounterIds));
         const claimIds = claims.map(({ id }) => id);
         if (claimIds.length) {
@@ -88,13 +109,27 @@ describe.skipIf(!url)("Charts read model with a locked shoulder note", () => {
 
   it("lists the scrubbed locked note with 40 computed minutes and three allocated units", async () => {
     const row = (await listOperatorCharts(connection.db, seedOrganization.id)).find(({ encounter }) => encounter.id === encounterId)!;
-    expect(row).toMatchObject({ noteId: lockedNoteId, status: "SCRUBBED", units: 3 });
+    expect(row).toMatchObject({ noteId: lockedNoteId, status: "SCRUBBED", units: 3,
+      rawMinutes: 40, billableUnionMinutes: 40, overlappingMinutes: 0 });
     expect(row.entries.map(({ cptCode, minutes }) => [cptCode, minutes])).toEqual([["97110", 20], ["97530", 20]]);
-    expect(row.entries[0]?.timing).toEqual({ startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z" });
+    expect(row.entries[0]?.timing).toEqual({ startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z", rawMinutes: 20 });
     const detail = await getOperatorChart(connection.db, seedOrganization.id, encounterId);
     expect(detail?.allocation.totalUnits).toBe(3);
     expect(detail?.latestClaim?.status).toBe("SCRUBBED");
     expect(await getOperatorChart(connection.db, seedOrganization.id, baseEncounterId)).toBeNull();
     expect(await getOperatorChart(connection.db, randomUUID(), encounterId)).toBeNull();
+  });
+
+  it("reports 40 raw minutes, 30 in the billable union, and previews only 30", async () => {
+    const row = (await listOperatorCharts(connection.db, seedOrganization.id))
+      .find(({ encounter }) => encounter.id === overlappingEncounterId)!;
+    expect(row).toMatchObject({ noteId: overlappingNoteId, status: "SCRUBBED",
+      rawMinutes: 40, billableUnionMinutes: 30, overlappingMinutes: 10 });
+    expect(row.entries.map(({ cptCode, rawMinutes, billableMinutes }) => [cptCode, rawMinutes, billableMinutes]))
+      .toEqual([["97110", 20, 20], ["97140", 20, 10], ["97161", 0, 0]]);
+    expect(row.entries[2]).toMatchObject({ untimed: true, timing: null });
+    const detail = await getOperatorChart(connection.db, seedOrganization.id, overlappingEncounterId);
+    expect(detail?.allocation.totalTimedMinutes).toBe(30);
+    expect(detail?.allocation.lines.reduce((sum, line) => sum + line.minutes, 0)).toBe(30);
   });
 });

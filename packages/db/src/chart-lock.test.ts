@@ -26,6 +26,7 @@ const note = {
     { cptCode: "97530", startTime: "2026-10-01T09:20:00Z", stopTime: "2026-10-01T09:40:00Z" },
   ],
 };
+const overlapping = JSON.parse(readFileSync(new URL("../../../fixtures/charts/overlapping-30min.json", import.meta.url), "utf8")) as typeof note;
 
 describe.skipIf(!url)("locked PT chart note ingestion", () => {
   let connection: ReturnType<typeof createDatabase>;
@@ -73,7 +74,8 @@ describe.skipIf(!url)("locked PT chart note ingestion", () => {
 
   it("updates the same draft from note timestamps and refuses a repeat lock after fixture submission", async () => {
     const first = await lockPtChartNote(connection.db, organizationId, note);
-    expect(first).toMatchObject({ created: true, status: "SCRUBBED", totalUnits: 3 });
+    expect(first).toMatchObject({ created: true, status: "SCRUBBED", totalUnits: 3,
+      rawTotalMinutes: 40, billableUnionMinutes: 40, overlapMinutes: 0, flags: [] });
     const [firstClaim] = await connection.db.select().from(s.claims).where(eq(s.claims.encounterId, first.encounterId));
     expect(firstClaim).toMatchObject({ id: first.claimId, status: "SCRUBBED" });
     expect(firstClaim!.snapshotJson.submission).toBeUndefined();
@@ -84,10 +86,12 @@ describe.skipIf(!url)("locked PT chart note ingestion", () => {
         { cptCode: "97110", minutes: 20, notes: {
           source: "SYNTHETIC_LOCKED_PT_NOTE", externalNoteId: noteId,
           startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z",
+          rawMinutes: 20, billableMinutes: 20, overlapMinutes: 0,
         } },
         { cptCode: "97530", minutes: 20, notes: {
           source: "SYNTHETIC_LOCKED_PT_NOTE", externalNoteId: noteId,
           startTime: "2026-10-01T09:20:00Z", stopTime: "2026-10-01T09:40:00Z",
+          rawMinutes: 20, billableMinutes: 20, overlapMinutes: 0,
         } },
       ]));
     expect(firstLines).toHaveLength(2);
@@ -113,6 +117,62 @@ describe.skipIf(!url)("locked PT chart note ingestion", () => {
     });
     expect(await connection.db.select().from(s.encounterMinuteLines)
       .where(eq(s.encounterMinuteLines.encounterId, first.encounterId))).toEqual(before);
+  });
+
+  it("credits overlapping 97110 and 97140 only once before the existing allocator runs", async () => {
+    const result = await lockPtChartNote(connection.db, organizationId, {
+      ...overlapping, externalNoteId: `SYN-OVERLAP-${randomUUID()}`, patientExternalId,
+    });
+    expect(result).toMatchObject({ status: "SCRUBBED", totalUnits: 2,
+      rawTotalMinutes: 40, billableUnionMinutes: 30, overlapMinutes: 10,
+      flags: ["OVERLAPPING_MINUTES"] });
+    const [claim] = await connection.db.select().from(s.claims).where(eq(s.claims.id, result.claimId));
+    expect(claim?.snapshotJson.allocatedUnits).toMatchObject({ totalTimedMinutes: 30, totalUnits: 2 });
+    expect(claim?.status).toBe("SCRUBBED");
+    expect(claim?.snapshotJson.submission).toBeUndefined();
+    const lines = await connection.db.select().from(s.encounterMinuteLines)
+      .where(eq(s.encounterMinuteLines.encounterId, result.encounterId));
+    expect(lines.map(({ cptCode, minutes, notes }) => ({ cptCode, minutes, notes: JSON.parse(notes!) })))
+      .toEqual(expect.arrayContaining([
+        { cptCode: "97110", minutes: 20, notes: expect.objectContaining({ rawMinutes: 20,
+          billableMinutes: 20, overlapMinutes: 0 }) },
+        { cptCode: "97140", minutes: 10, notes: expect.objectContaining({ rawMinutes: 20,
+          billableMinutes: 10, overlapMinutes: 10 }) },
+      ]));
+  });
+
+  it("keeps an untimed eval outside the timed union", async () => {
+    const result = await lockPtChartNote(connection.db, organizationId, {
+      ...overlapping, externalNoteId: `SYN-OVERLAP-EVAL-${randomUUID()}`, patientExternalId,
+      untimedEntries: [{ cptCode: "97161" }],
+    });
+    expect(result).toMatchObject({ rawTotalMinutes: 40, billableUnionMinutes: 30, totalUnits: 3 });
+    const [claim] = await connection.db.select().from(s.claims).where(eq(s.claims.id, result.claimId));
+    expect(claim?.snapshotJson.allocatedUnits).toMatchObject({ totalTimedMinutes: 30, totalUnits: 3 });
+    const lines = await connection.db.select().from(s.encounterMinuteLines)
+      .where(eq(s.encounterMinuteLines.encounterId, result.encounterId));
+    expect(lines.find(({ cptCode }) => cptCode === "97161")).toMatchObject({ timed: false, minutes: 0 });
+  });
+
+  it("credits a fully contained service zero minutes and keeps the existing zero-minute block", async () => {
+    const contained = await lockPtChartNote(connection.db, organizationId, {
+      ...overlapping, externalNoteId: `SYN-CONTAINED-${randomUUID()}`, patientExternalId,
+      timedEntries: [
+        { cptCode: "97110", startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:30:00Z" },
+        { cptCode: "97140", startTime: "2026-10-01T09:10:00Z", stopTime: "2026-10-01T09:20:00Z" },
+      ],
+    });
+    expect(contained).toMatchObject({ status: "BLOCKED", rawTotalMinutes: 40,
+      billableUnionMinutes: 30, overlapMinutes: 10, flags: ["OVERLAPPING_MINUTES"] });
+    const lines = await connection.db.select().from(s.encounterMinuteLines)
+      .where(eq(s.encounterMinuteLines.encounterId, contained.encounterId));
+    expect(lines.find(({ cptCode }) => cptCode === "97140")).toMatchObject({ minutes: 0, timed: true });
+    const [claim] = await connection.db.select().from(s.claims).where(eq(s.claims.id, contained.claimId));
+    expect(claim?.snapshotJson.allocatedUnits).toMatchObject({ totalTimedMinutes: 30 });
+    expect(claim?.snapshotJson.submission).toBeUndefined();
+    expect(await connection.db.select().from(s.tasks).where(eq(s.tasks.claimId, contained.claimId)))
+      .toEqual([expect.objectContaining({ kind: "RULE_BLOCK", status: "OPEN",
+        reason: expect.stringContaining("ZERO_MINUTES") })]);
   });
 
   it("opens the existing RULE_BLOCK task when the locked note has an unbillable zero-minute service", async () => {
