@@ -14,6 +14,25 @@ async function ingest(name: string) {
   return response.json() as Promise<{ encounterId: string; patientId: string; status: string }>;
 }
 
+async function lockShoulderNote() {
+  const endpoint = new URL("/api/charts/lock", process.env.ENCOUNTER_API_URL ?? "http://localhost:3000");
+  const response = await fetch(endpoint, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+      externalNoteId: "SYN-LOCKED-SHOULDER-NOTE",
+      patientExternalId: "SYN-PATIENT-SHOULDER",
+      renderingNpi: "0000000003",
+      dateOfService: "2026-10-01",
+      diagnoses: ["M25.511"],
+      timedEntries: [
+        { cptCode: "97110", startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z" },
+        { cptCode: "97530", startTime: "2026-10-01T09:20:00Z", stopTime: "2026-10-01T09:40:00Z" },
+      ],
+    }),
+  });
+  if (!response.ok) throw new Error(`Demo chart lock failed (${response.status}): ${await response.text()}`);
+  return response.json() as Promise<{ encounterId: string }>;
+}
+
 async function syntheticEncounter(externalId: string, patientExternalId: string, patientName: string) {
   const fixture = JSON.parse(await readFile(new URL("../../../fixtures/encounters/underbilled-40min.json", import.meta.url), "utf8"));
   fixture.externalId = externalId;
@@ -31,6 +50,11 @@ try {
   console.log(shoulder ? "Synthetic shoulder encounter already present:"
     : "Synthetic shoulder encounter ingested:", shoulder
       ? { encounterId: shoulder.id } : await ingest("shoulder-23min"));
+  const [lockedNote] = await connection.client`select id from encounters
+    where organization_id = ${organizationId} and external_id = 'SYN-CHART-SYN-LOCKED-SHOULDER-NOTE'`;
+  console.log(lockedNote ? "Synthetic locked shoulder note already present:"
+    : "Synthetic locked shoulder note ingested:", lockedNote
+      ? { encounterId: lockedNote.id } : await lockShoulderNote());
   const [existing] = await connection.client`select e.id as encounter_id, c.status as claim_status,
       c.total_charge_cents as charge_cents, c.id as claim_id
     from encounters e left join lateral (

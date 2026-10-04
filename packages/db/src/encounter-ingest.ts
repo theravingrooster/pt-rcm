@@ -18,9 +18,15 @@ export class EncounterIngestError extends Error {
 }
 
 /** Persist recorded inputs only. No billing rules, allocation, or clearinghouse calls. */
-export async function upsertEncounter(db: Database, organizationId: string, input: unknown): Promise<EncounterIngestResult> {
+export async function upsertEncounter(db: Database, organizationId: string, input: unknown,
+  options?: { source: "chart" }): Promise<EncounterIngestResult> {
   IdSchema.parse(organizationId);
   const data = EncounterIngestSchema.parse(input);
+  // The chart namespace may only be written by the locked-note path, which
+  // computes minutes from timestamps rather than accepting caller minutes.
+  if (data.externalId.startsWith("SYN-CHART-") !== (options?.source === "chart")) {
+    throw new EncounterIngestError(422, "CHART_SOURCE_REQUIRED", "Chart encounters require a locked synthetic note");
+  }
   return db.transaction(async (tx) => {
     // Serialize even the first insert for an organization/external ID pair.
     // Hash collisions only serialize unrelated requests; the unique key is authoritative.
@@ -39,6 +45,13 @@ export async function upsertEncounter(db: Database, organizationId: string, inpu
       }
       if (existing.status !== "DRAFT" && existing.status !== "HELD") {
         throw new EncounterIngestError(409, "ENCOUNTER_NOT_EDITABLE", "Only DRAFT or HELD encounters can be updated");
+      }
+      if (data.externalId.startsWith("SYN-CHART-")) {
+        const [originalPatient] = await tx.select({ externalId: s.patients.externalId }).from(s.patients)
+          .where(eq(s.patients.id, existing.patientId));
+        if (originalPatient?.externalId !== data.patient.externalId) {
+          throw new EncounterIngestError(409, "NOTE_PATIENT_MISMATCH", "A locked note cannot change patients");
+        }
       }
     }
 

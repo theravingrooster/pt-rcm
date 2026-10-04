@@ -1,6 +1,7 @@
 export * from "./models.js";
 export * from "./fixtures/index.js";
 export * from "./encounter-ingest.js";
+export * from "./locked-pt-note.js";
 export * from "./eightMinute.js";
 export * from "./amaMidpoint.js";
 export * from "./claimDocument.js";

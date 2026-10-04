@@ -159,6 +159,15 @@ describe.skipIf(!url)("transactional encounter ingestion", () => {
     expect(await connection.db.select().from(s.encounters).where(eq(s.encounters.externalId, body.externalId))).toEqual([]);
   });
 
+  it("refuses direct ingest to the chart namespace so minutes come from locked note times", async () => {
+    const body = input();
+    body.externalId = `SYN-CHART-SYN-DIRECT-${randomUUID()}`;
+    await expect(upsertEncounter(connection.db, organizationId, body)).rejects.toMatchObject({
+      status: 422, code: "CHART_SOURCE_REQUIRED",
+    });
+    expect(await connection.db.select().from(s.encounters).where(eq(s.encounters.externalId, body.externalId))).toEqual([]);
+  });
+
   it("rejects cross-organization facilities and missing rendering providers", async () => {
     const body = input();
     await expect(upsertEncounter(connection.db, organizationId, { ...body, facilityId: otherFacilityId })).rejects.toMatchObject({ status: 422 });
