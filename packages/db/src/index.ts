@@ -18,6 +18,7 @@ export * from "./coverage-eligibility.js";
 export * from "./operator-read.js";
 export * from "./metrics-read.js";
 export * from "./claims-console-read.js";
+export * from "./claims-export.js";
 export * from "./config-console-read.js";
 export * from "./people-remits-read.js";
 export * from "./rules-console-read.js";

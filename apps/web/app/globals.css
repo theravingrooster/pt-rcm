@@ -131,6 +131,11 @@ td a { font-weight: 600; }
 .action-hint, .action-feedback { margin-top: 6px; font-size: 16px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
 .action-feedback { color: #86e5c2; }
 .action-feedback.failure { color: #ffadb3; }
+.export-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; padding: 14px; }
+.export-form label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 16px; font-weight: 700; }
+.export-form select { min-height: 44px; min-width: 225px; padding: 8px 12px; font: inherit; color: var(--text); background: #071b2c; border: 1px solid #34718c; border-radius: 4px; }
+.export-form button { min-height: 44px; }
+.export-form .action-feedback { width: 100%; margin: 0; }
 .suggestion-action { margin-top: 8px; }
 .breadcrumb { color: var(--muted); font-size: 16px; overflow-wrap: anywhere; }
 .facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px 24px; margin: 0 0 22px; padding: 16px; border: 1px solid var(--line); background: var(--panel); border-radius: 7px; }
