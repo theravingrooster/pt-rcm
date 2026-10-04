@@ -43,7 +43,7 @@ export async function listOperatorCharts(db: Database, organizationId: string) {
     const entries = minuteLines.filter((line) => line.encounterId === row.encounter.id).map((line) => ({
       ...line, timing: chartTimingForLine(line.notes, noteId, line.minutes),
     }));
-    return { ...row, noteId, entries, status: row.claim?.status ?? row.encounter.status };
+    return { ...row, noteId, entries, status: row.claim?.status ?? "DRAFT" };
   });
 }
 
@@ -54,5 +54,5 @@ export async function getOperatorChart(db: Database, organizationId: string, enc
   if (!row || noteId === null) return null;
   return { ...row, noteId, entries: row.minuteLines.map((line) => ({
     ...line, timing: chartTimingForLine(line.notes, noteId, line.minutes),
-  })), status: row.latestClaim?.status ?? row.encounter.status };
+  })), status: row.latestClaim?.status ?? "DRAFT" };
 }

@@ -16,13 +16,13 @@ export default async function ChartsPage() {
       <p className="muted">Locked synthetic PT notes and their linked encounters.</p></div></div>
     <section className="panel"><div className="section-heading"><h2>Locked notes</h2><span className="muted">Minutes come from saved start and stop times</span></div>
       {rows.length ? <TableFrame label="Locked PT notes"><table><thead><tr><th scope="col">Note ID</th><th scope="col">Patient external ID</th><th scope="col">DOS</th><th scope="col">CPT entries</th><th scope="col" className="number">Minutes</th><th scope="col">Linked status</th><th scope="col" className="number">Units</th></tr></thead>
-        <tbody>{rows.map(({ encounter, patient, noteId, entries, status, units, claim }) => <tr key={encounter.id}>
+        <tbody>{rows.map(({ encounter, patient, noteId, entries, units, claim }) => <tr key={encounter.id}>
           <td className="mono"><Link href={`/charts/${encounter.id}`}>{noteId}</Link></td>
           <td className="mono">{patient.externalId}</td>
           <td className="nowrap"><time dateTime={encounter.dateOfService}>{encounter.dateOfService}</time></td>
           <td>{entries.length ? entries.map((line) => <span key={line.id} className="subtext mono">{line.cptCode} · {line.minutes} min{line.timing ? "" : " (time unavailable)"}</span>) : <span className="muted">No timed entries</span>}</td>
           <td className="number">{entries.reduce((sum, line) => sum + line.minutes, 0)}</td>
-          <td><Badge value={status} />{claim ? <span className="subtext">Encounter: {encounter.status}</span> : null}</td>
+          <td><Badge value={claim?.status ?? "DRAFT"} />{claim ? <span className="subtext mono">v{claim.version}</span> : null}</td>
           <td className="number">{units}</td>
         </tr>)}</tbody></table></TableFrame> : <EmptyState>No locked notes yet.</EmptyState>}
     </section>

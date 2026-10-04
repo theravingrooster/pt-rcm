@@ -15,7 +15,7 @@ export default async function ChartPage({ params }: { params: Promise<{ id: stri
   const result = await loadOperatorData((db, org) => getOperatorChart(db, org, parsed.data));
   if (!result.ok) return <DataUnavailable />;
   if (!result.data) notFound();
-  const { encounter, patient, provider, noteId, status, entries, allocation, latestClaim } = result.data;
+  const { encounter, patient, provider, noteId, entries, allocation, latestClaim } = result.data;
   return <>
     <p className="breadcrumb"><Link href="/charts">Charts</Link> / <span className="mono">{noteId}</span></p>
     <div className="page-heading"><div><p className="eyebrow">Operations / Charts</p><h1>Locked PT note</h1><p className="muted mono">{noteId}</p></div>
@@ -23,7 +23,7 @@ export default async function ChartPage({ params }: { params: Promise<{ id: stri
     <dl className="facts"><div><dt>Patient external ID</dt><dd className="mono">{patient.externalId}</dd></div>
       <div><dt>Date of service</dt><dd><time dateTime={encounter.dateOfService}>{encounter.dateOfService}</time></dd></div>
       <div><dt>Rendering NPI</dt><dd className="mono">{provider.npi}</dd></div>
-      <div><dt>Linked status</dt><dd><Badge value={status} />{latestClaim ? <span className="subtext">Encounter: {encounter.status}</span> : null}</dd></div>
+      <div><dt>Linked status</dt><dd><Badge value={latestClaim?.status ?? "DRAFT"} /></dd></div>
       <div><dt>Claim</dt><dd>{latestClaim ? <Link href={`/claims/${latestClaim.id}`}>v{latestClaim.version}</Link> : "Not created"}</dd></div>
     </dl>
     <section className="panel"><div className="section-heading"><h2>Recorded timed entries</h2><span className="muted">Source note timing, saved on lock</span></div>

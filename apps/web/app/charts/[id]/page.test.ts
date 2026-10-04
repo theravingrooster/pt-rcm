@@ -32,5 +32,6 @@ describe("locked chart detail", () => {
     expect(html).toContain("3</strong> units");
     expect(html).toContain(`/claims/${claimId}`);
     expect(html).toContain("SCRUBBED");
+    expect(html).not.toContain("Encounter: DRAFT");
   });
 });
