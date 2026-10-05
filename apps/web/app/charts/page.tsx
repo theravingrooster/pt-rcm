@@ -20,7 +20,7 @@ export default async function ChartsPage() {
           <td className="mono"><Link href={`/charts/${encounter.id}`}>{noteId}</Link></td>
           <td className="mono">{patient.externalId}</td>
           <td className="nowrap"><time dateTime={encounter.dateOfService}>{encounter.dateOfService}</time></td>
-          <td>{entries.length ? entries.map((line) => <span key={line.id} className="subtext mono">{line.cptCode} · {line.untimed ? "untimed" : `${line.rawMinutes} min · ${line.performer ?? "Performer unavailable"}${line.timing ? "" : " (time unavailable)"}`}</span>) : <span className="muted">No entries</span>}</td>
+          <td>{entries.length ? entries.map((line) => <span key={line.id} className="subtext mono">{line.cptCode} · {line.untimed ? "untimed" : `${line.rawMinutes} min · ${line.performer ?? "Performer unavailable"}${line.performer === "PTA" && line.ptaBillableMinutes < line.billableMinutes ? ` (${line.ptaBillableMinutes}/${line.billableMinutes} PTA min)` : ""}${line.timing ? "" : " (time unavailable)"}`}</span>) : <span className="muted">No entries</span>}</td>
           <td className="number">{rawMinutes}</td>
           <td className="number">{billableUnionMinutes}</td>
           <td>{overlappingMinutes > 0 ? <><Badge value="FLAG" /> <span className="mono">OVERLAPPING_MINUTES</span></> : <span className="muted">—</span>}</td>

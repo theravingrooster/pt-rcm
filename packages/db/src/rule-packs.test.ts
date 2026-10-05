@@ -58,16 +58,18 @@ describe.skipIf(!url)("versioned rule pack lifecycle", () => {
       const v2 = packsBefore.find((pack) => pack.version === "2")!;
       const v3 = packsBefore.find((pack) => pack.version === "3")!;
       const v4 = packsBefore.find((pack) => pack.version === "4")!;
+      const v5 = packsBefore.find((pack) => pack.version === "5")!;
       expect(v1.status).toBe("RETIRED");
-      expect(v4.status).toBe("ACTIVE");
+      expect(v4.status).toBe("RETIRED");
+      expect(v5.status).toBe("ACTIVE");
       expect(fires.filter((fire) => fire.shadow)).toHaveLength(10);
       expect(fires.filter((fire) => !fire.shadow)).toHaveLength(9);
       expect(fires.filter((fire) => fire.shadow).every((fire) => fire.ruleSetId === v3.id)).toBe(true);
       expect(fires.filter((fire) => fire.ruleSetId === v2.id)).toHaveLength(0);
-      expect(fires.filter((fire) => !fire.shadow).every((fire) => fire.ruleSetId === v4.id)).toBe(true);
+      expect(fires.filter((fire) => !fire.shadow).every((fire) => fire.ruleSetId === v5.id)).toBe(true);
       const promoted = await promoteRulePackInTransaction(tx, "3");
-      expect(promoted).toMatchObject({ version: "3", status: "ACTIVE", retiredVersion: "4", testedClaimId: active.claimId });
-      expect((await tx.select().from(s.ruleSets).where(eq(s.ruleSets.id, v4.id)))[0]!.status).toBe("RETIRED");
+      expect(promoted).toMatchObject({ version: "3", status: "ACTIVE", retiredVersion: "5", testedClaimId: active.claimId });
+      expect((await tx.select().from(s.ruleSets).where(eq(s.ruleSets.id, v5.id)))[0]!.status).toBe("RETIRED");
       expect((await currentRulePack(tx, "ACTIVE")).pack.rules.map((rule) => rule.id)).toContain("timed-code-cap");
       expect((await currentRulePack(tx, "ACTIVE")).pack.rules.map((rule) => rule.id)).toContain("coverage-inactive");
       await expect(promoteRulePackInTransaction(tx, "1"))
@@ -80,7 +82,8 @@ describe.skipIf(!url)("versioned rule pack lifecycle", () => {
       expect(after.findings).toHaveLength(10);
       const newFires = await tx.select().from(s.ruleFires).where(and(eq(s.ruleFires.claimId, active.claimId), eq(s.ruleFires.shadow, false)));
       expect(newFires.filter((fire) => fire.ruleSetId === v1.id)).toHaveLength(0);
-      expect(newFires.filter((fire) => fire.ruleSetId === v4.id)).toHaveLength(9);
+      expect(newFires.filter((fire) => fire.ruleSetId === v4.id)).toHaveLength(0);
+      expect(newFires.filter((fire) => fire.ruleSetId === v5.id)).toHaveLength(9);
       expect(newFires.filter((fire) => fire.ruleSetId === v2.id)).toHaveLength(0);
       expect(newFires.filter((fire) => fire.ruleSetId === v3.id)).toHaveLength(10);
 
@@ -119,13 +122,13 @@ describe.skipIf(!url)("versioned rule pack lifecycle", () => {
       expect((await tx.select().from(s.ruleFires).where(and(eq(s.ruleFires.claimId, active.claimId), eq(s.ruleFires.ruleSetId, v2.id))))).toHaveLength(0);
       // The expected constraint error ends this outer transaction, rolling
       // the temporary promotion back without a nested savepoint in PGlite.
-      await tx.update(s.ruleSets).set({ notes: "SYN attempted rewrite" }).where(eq(s.ruleSets.id, v4.id));
+      await tx.update(s.ruleSets).set({ notes: "SYN attempted rewrite" }).where(eq(s.ruleSets.id, v5.id));
     })).rejects.toMatchObject({ code: "23514" });
     // The rejecting connection can retain an aborted state in PGlite. Verify
     // the rollback from a new connection so the test checks persisted state.
     const verification = createDatabase(url!);
     try {
-      expect((await currentRulePack(verification.db, "ACTIVE")).row.version).toBe("4");
+      expect((await currentRulePack(verification.db, "ACTIVE")).row.version).toBe("5");
       expect((await currentRulePack(verification.db, "SHADOW")).row.version).toBe("3");
     } finally { await verification.client.end(); }
   });

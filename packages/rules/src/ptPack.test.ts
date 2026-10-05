@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { allocateUnits, fixtureLineChargeCents, getCptFixture, loadMedicareMinuteLadder } from "@pt-rcm/domain";
 import { applyDowngrades, runRules, toRuleFireRows } from "./index.js";
-import { authVisitsRule, coverageInactiveRule, distinctProcedureRule, eightMinuteAppliedRule, evalWithTreatmentRule, gpModifierRule, kxThresholdRule, planOfCareRule, ptPack, ptaCqModifierRule, suggestDistinctProcedure, timedCodeCapRule, zeroMinuteTimedRule } from "./ptPack.js";
+import { authVisitsRule, coverageInactiveRule, distinctProcedureRule, eightMinuteAppliedRule, evalWithTreatmentRule, gpModifierRule, kxThresholdRule, planOfCareRule, ptPack, ptaCqDeMinimisRule, ptaCqModifierRule, suggestDistinctProcedure, timedCodeCapRule, zeroMinuteTimedRule } from "./ptPack.js";
 import { makeContext, testClaimId } from "./testing/fixtures.js";
 import type { RuleContext } from "./types.js";
 
@@ -125,6 +125,63 @@ describe("pta-cq-modifier", () => {
     expect(run.blocks).toEqual([]);
     expect(applyDowngrades(ctx.draftClaim, run.downgrades).lines.map(({ units, modifiers }) => ({ units, modifiers })))
       .toEqual([{ units: 1, modifiers: ["CQ"] }, { units: 1, modifiers: [] }]);
+  });
+});
+
+describe("pta-cq-modifier v2 Medicare de minimis", () => {
+  const notes = (performer: "PT" | "PTA", ptaBillableMinutes: number) => JSON.stringify({
+    source: "SYNTHETIC_LOCKED_PT_NOTE", externalNoteId: "SYN-PTA-DE-MINIMIS",
+    performer, ptaBillableMinutes, billableMinutes: 20,
+    startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z",
+  });
+
+  it.each([
+    { label: "100 percent PTA", performer: "PTA", ptaMinutes: 20, outcome: "DOWNGRADE" },
+    { label: "above 10 percent mixed", performer: "PTA", ptaMinutes: 3, outcome: "DOWNGRADE" },
+    { label: "exactly 10 percent mixed", performer: "PTA", ptaMinutes: 2, outcome: "PASS" },
+    { label: "below 10 percent mixed", performer: "PTA", ptaMinutes: 1, outcome: "PASS" },
+    { label: "PT only", performer: "PT", ptaMinutes: 20, outcome: "PASS" },
+  ] as const)("$label: $ptaMinutes/20 is $outcome", ({ performer, ptaMinutes, outcome }) => {
+    const ctx = context([{ cptCode: "97110", minutes: 20, notes: notes(performer, ptaMinutes) }]);
+    const before = structuredClone(ctx);
+    const result = ptaCqDeMinimisRule.evaluate(ctx);
+    expect(result).toMatchObject(outcome === "DOWNGRADE"
+      ? { outcome, code: "MISSING_CQ", linePatches: [{ lineIndex: 0, addModifiers: ["CQ"] }] }
+      : { outcome });
+    expect(ctx).toEqual(before);
+  });
+
+  it("applies GP independently while leaving an exactly 10 percent second line without CQ", () => {
+    const ctx = context([
+      { cptCode: "97110", minutes: 20, notes: notes("PTA", 20) },
+      { cptCode: "97530", minutes: 20, notes: notes("PTA", 2) },
+    ]);
+    const run = runRules([gpModifierRule, ptaCqDeMinimisRule], ctx);
+    expect(ctx.allocatedUnits.totalUnits).toBe(3);
+    expect(run.submissionAllowed).toBe(true);
+    expect(applyDowngrades(ctx.draftClaim, run.downgrades).lines.map(({ units, modifiers }) => ({ units, modifiers })))
+      .toEqual([{ units: 2, modifiers: ["GP", "CQ"] }, { units: 1, modifiers: ["GP"] }]);
+  });
+
+  it("does not add CQ to untimed evals, zero-unit lines, or commercial claims", () => {
+    expect(ptaCqDeMinimisRule.evaluate(context([{ cptCode: "97161", minutes: 0, notes: notes("PTA", 0) }])))
+      .toEqual({ outcome: "PASS" });
+    expect(ptaCqDeMinimisRule.evaluate(context([{ cptCode: "97110", minutes: 0, notes: notes("PTA", 0) }])))
+      .toEqual({ outcome: "PASS" });
+    const commercial = context([{ cptCode: "97110", minutes: 20, notes: notes("PTA", 20) }]);
+    expect(ptaCqDeMinimisRule.evaluate({ ...commercial, payer: { ...commercial.payer, payerType: "COMMERCIAL" } }))
+      .toEqual({ outcome: "PASS" });
+  });
+
+  it("credits only billable minutes after overlap and does not trust an impossible PTA count", () => {
+    const credited = context([{ cptCode: "97110", minutes: 10, notes: notes("PTA", 1) }]);
+    expect(ptaCqDeMinimisRule.evaluate(credited)).toEqual({ outcome: "PASS" });
+    const overCredited = context([{ cptCode: "97110", minutes: 10, notes: notes("PTA", 20) }]);
+    expect(ptaCqDeMinimisRule.evaluate(overCredited)).toEqual({ outcome: "PASS" });
+    const legacy = context([{ cptCode: "97110", minutes: 20, notes: JSON.stringify({
+      source: "SYNTHETIC_LOCKED_PT_NOTE", performer: "PTA",
+    }) }]);
+    expect(ptaCqDeMinimisRule.evaluate(legacy)).toMatchObject({ outcome: "DOWNGRADE", code: "MISSING_CQ" });
   });
 });
 

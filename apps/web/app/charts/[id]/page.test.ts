@@ -66,4 +66,21 @@ describe("locked chart detail", () => {
     expect(html).toMatch(/<td>PTA<\/td>/);
     expect(html).toMatch(/<td class="number">20<\/td><td class="number">10<\/td>/);
   });
+
+  it("shows the credited PTA portion of a mixed timed entry", async () => {
+    vi.mocked(loadOperatorData).mockResolvedValue({ ok: true, data: {
+      noteId: "SYN-PTA-20MIN-NOTE", encounter: { id: encounterId, dateOfService: "2026-10-01" },
+      patient: { externalId: "SYN-PATIENT-1" }, provider: { npi: "0000000003" },
+      latestClaim: { id: claimId, version: 1, status: "SCRUBBED" },
+      rawMinutes: 20, billableUnionMinutes: 20, overlappingMinutes: 0,
+      entries: [{ id: "line-2", cptCode: "97140", minutes: 20, rawMinutes: 20,
+        billableMinutes: 20, ptaBillableMinutes: 2, performer: "PTA",
+        timing: { startTime: "2026-10-01T09:20:00Z", stopTime: "2026-10-01T09:40:00Z" } }],
+      allocation: { totalTimedMinutes: 20, totalUnits: 1, unusedMinutes: 0, flags: [], lines: [
+        { cptCode: "97140", minutes: 20, units: 1, remainderMinutes: 5 },
+      ] },
+    } } as never);
+    const html = renderToStaticMarkup(await ChartPage({ params: Promise.resolve({ id: encounterId }) }));
+    expect(html).toContain("PTA (2/20 PTA min)");
+  });
 });

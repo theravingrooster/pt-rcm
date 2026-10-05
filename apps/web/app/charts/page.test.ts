@@ -69,11 +69,12 @@ describe("Charts page", () => {
   it("identifies PTA performance in the timed entry on the chart list", async () => {
     vi.mocked(loadOperatorData).mockResolvedValue({ ok: true, data: [{ ...row,
       noteId: "SYN-PTA-20MIN-NOTE",
-      entries: [{ ...row.entries[0], performer: "PTA" }],
-      rawMinutes: 20, billableUnionMinutes: 20, overlappingMinutes: 0,
+      entries: [{ ...row.entries[0], performer: "PTA", ptaBillableMinutes: 20 },
+        { ...row.entries[1], cptCode: "97140", performer: "PTA", ptaBillableMinutes: 2 }],
     }] } as never);
     const html = renderToStaticMarkup(await ChartsPage());
     expect(html).toContain("97110 · 20 min · PTA");
+    expect(html).toContain("97140 · 20 min · PTA (2/20 PTA min)");
   });
 
   it("shows DRAFT only when no claim has been created", async () => {

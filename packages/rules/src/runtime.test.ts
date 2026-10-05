@@ -134,7 +134,7 @@ describe("runRules", () => {
 
   it("registers PT version 4 while keeping ALWAYS_FLAG test-only", () => {
     expect(api.defaultRulePack).toHaveLength(9);
-    expect(api.defaultRulePackVersion).toBe(4);
+    expect(api.defaultRulePackVersion).toBe(5);
     expect(api.defaultRulePackMode).toBe("active");
     expect(api.defaultRulePack.some((rule) => rule.id === "pta-cq-modifier")).toBe(true);
     expect(api.defaultRulePack.some((rule) => rule.id === "ALWAYS_FLAG")).toBe(false);

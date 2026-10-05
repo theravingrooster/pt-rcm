@@ -93,13 +93,13 @@ describe.skipIf(!url)("locked PT chart note ingestion", () => {
           source: "SYNTHETIC_LOCKED_PT_NOTE", externalNoteId: noteId,
           startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z",
           performer: "PT",
-          rawMinutes: 20, billableMinutes: 20, overlapMinutes: 0,
+          ptaBillableMinutes: 0, rawMinutes: 20, billableMinutes: 20, overlapMinutes: 0,
         } },
         { cptCode: "97530", minutes: 20, notes: {
           source: "SYNTHETIC_LOCKED_PT_NOTE", externalNoteId: noteId,
           startTime: "2026-10-01T09:20:00Z", stopTime: "2026-10-01T09:40:00Z",
           performer: "PT",
-          rawMinutes: 20, billableMinutes: 20, overlapMinutes: 0,
+          ptaBillableMinutes: 0, rawMinutes: 20, billableMinutes: 20, overlapMinutes: 0,
         } },
       ]));
     expect(firstLines).toHaveLength(2);
@@ -127,23 +127,30 @@ describe.skipIf(!url)("locked PT chart note ingestion", () => {
       .where(eq(s.encounterMinuteLines.encounterId, first.encounterId))).toEqual(before);
   });
 
-  it("adds CQ and GP to a billed Medicare line performed by a PTA", async () => {
+  it("adds CQ above ten percent, but not at ten percent, without changing Medicare GP or units", async () => {
     const result = await lockPtChartNote(connection.db, organizationId, {
       ...pta, externalNoteId: `SYN-PTA-${randomUUID()}`, patientExternalId,
     });
-    expect(result).toMatchObject({ status: "SCRUBBED", totalUnits: 1, rawTotalMinutes: 20,
-      billableUnionMinutes: 20, overlapMinutes: 0 });
-    const [saved] = await connection.db.select().from(s.claimLines).where(eq(s.claimLines.claimId, result.claimId));
-    expect(saved).toMatchObject({ cptCode: "97110", minutes: 20, units: 1,
-      modifiers: expect.arrayContaining(["CQ", "GP"]) });
+    expect(result).toMatchObject({ status: "SCRUBBED", totalUnits: 3, rawTotalMinutes: 40,
+      billableUnionMinutes: 40, overlapMinutes: 0 });
+    const saved = await connection.db.select().from(s.claimLines).where(eq(s.claimLines.claimId, result.claimId));
+    expect(saved).toEqual(expect.arrayContaining([
+      expect.objectContaining({ cptCode: "97110", minutes: 20, modifiers: expect.arrayContaining(["CQ", "GP"]) }),
+      expect.objectContaining({ cptCode: "97140", minutes: 20, modifiers: ["GP"] }),
+    ]));
+    expect(saved.reduce((total, line) => total + line.units, 0)).toBe(3);
     const fires = await connection.db.select().from(s.ruleFires).where(eq(s.ruleFires.claimId, result.claimId));
     expect(fires).toEqual(expect.arrayContaining([
       expect.objectContaining({ ruleId: "pta-cq-modifier", outcome: "DOWNGRADE", detailJson: expect.objectContaining({ code: "MISSING_CQ" }) }),
       expect.objectContaining({ ruleId: "gp-modifier", outcome: "DOWNGRADE", detailJson: expect.objectContaining({ code: "MISSING_GP" }) }),
     ]));
-    const [recorded] = await connection.db.select().from(s.encounterMinuteLines)
+    const recorded = await connection.db.select().from(s.encounterMinuteLines)
       .where(eq(s.encounterMinuteLines.encounterId, result.encounterId));
-    expect(JSON.parse(recorded!.notes!)).toMatchObject({ performer: "PTA", billableMinutes: 20 });
+    expect(recorded.map((line) => ({ cptCode: line.cptCode, notes: JSON.parse(line.notes!) })))
+      .toEqual(expect.arrayContaining([
+        { cptCode: "97110", notes: expect.objectContaining({ performer: "PTA", billableMinutes: 20, ptaBillableMinutes: 20 }) },
+        { cptCode: "97140", notes: expect.objectContaining({ performer: "PTA", billableMinutes: 20, ptaBillableMinutes: 2 }) },
+      ]));
   });
 
   it("allocates the overlap union before adding CQ only to the billed PTA line", async () => {

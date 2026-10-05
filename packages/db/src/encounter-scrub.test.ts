@@ -86,10 +86,11 @@ describe.skipIf(!url)("transactional PT scrub", () => {
       { cptCode: "97530", minutes: 20, units: 1, modifiers: ["GP"], chargeCents: 4500, diagnosisPointers: [0] },
     ]);
     expect(saved.fires).toHaveLength(9);
-    expect(saved.fires.every((fire) => !fire.shadow && fire.ruleVersion === "1")).toBe(true);
+    expect(saved.fires.every((fire) => !fire.shadow
+      && fire.ruleVersion === (fire.ruleId === "pta-cq-modifier" ? "2" : "1"))).toBe(true);
     expect(saved.fires.find((fire) => fire.ruleId === "gp-modifier")).toMatchObject({ outcome: "DOWNGRADE", detailJson: { code: "MISSING_GP" } });
     expect(saved.fires.find((fire) => fire.ruleId === "pta-cq-modifier")).toMatchObject({ outcome: "PASS" });
-    expect(saved.claim).toMatchObject({ status: "SCRUBBED", snapshotJson: { rulePack: { id: "outpatient-pt", version: 4, mode: "active" }, yearToDateBilledCents: 0 } });
+    expect(saved.claim).toMatchObject({ status: "SCRUBBED", snapshotJson: { rulePack: { id: "outpatient-pt", version: 5, mode: "active" }, yearToDateBilledCents: 0 } });
     const repeat = await scrub(encounterId);
     expect(repeat).toMatchObject({ claimId: result.claimId, version: 1, status: "SCRUBBED", totalUnits: 3 });
     expect((await stored(result.claimId)).fires).toHaveLength(18);

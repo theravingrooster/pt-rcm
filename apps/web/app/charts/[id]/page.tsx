@@ -33,7 +33,10 @@ export default async function ChartPage({ params }: { params: Promise<{ id: stri
     <section className="panel"><div className="section-heading"><h2>Recorded entries</h2><span className="muted">Source note timing, saved on lock</span></div>
       {entries.length ? <TableFrame label="Locked note entries"><table><thead><tr><th scope="col">CPT / service</th><th scope="col">Performer</th><th scope="col">Start (UTC)</th><th scope="col">Stop (UTC)</th><th scope="col" className="number">Raw minutes</th><th scope="col" className="number">Billable minutes</th></tr></thead>
         <tbody>{entries.map((entry) => <tr key={entry.id}><td><span className="mono">{entry.cptCode}</span><span className="subtext">{getCptFixture(entry.cptCode)?.name ?? "Fixture service"}</span></td>
-          <td>{entry.untimed ? <span className="muted">—</span> : entry.performer ?? <span className="muted">Unavailable</span>}</td>
+          <td>{entry.untimed ? <span className="muted">—</span> : entry.performer
+            ? `${entry.performer}${entry.performer === "PTA" && entry.ptaBillableMinutes < entry.billableMinutes
+              ? ` (${entry.ptaBillableMinutes}/${entry.billableMinutes} PTA min)` : ""}`
+            : <span className="muted">Unavailable</span>}</td>
           <td className="mono nowrap">{entry.untimed ? <span className="muted">Untimed</span> : entry.timing ? <time dateTime={entry.timing.startTime}>{entry.timing.startTime}</time> : <span className="muted">Time unavailable</span>}</td>
           <td className="mono nowrap">{entry.untimed ? <span className="muted">Untimed</span> : entry.timing ? <time dateTime={entry.timing.stopTime}>{entry.timing.stopTime}</time> : <span className="muted">Time unavailable</span>}</td>
           <td className="number">{entry.untimed ? "—" : entry.rawMinutes}</td><td className="number">{entry.untimed ? "—" : entry.billableMinutes}</td></tr>)}</tbody></table></TableFrame> : <EmptyState>No entries recorded.</EmptyState>}

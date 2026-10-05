@@ -139,6 +139,7 @@ export async function upsertEncounter(db: Database, organizationId: string, inpu
         ...(chartIntervals!.lines[index] ? {
           startTime: chartIntervals!.lines[index]!.startTime, stopTime: chartIntervals!.lines[index]!.stopTime,
           performer: chartIntervals!.lines[index]!.performer,
+          ptaBillableMinutes: chartIntervals!.lines[index]!.ptaBillableMinutes,
           rawMinutes: chartIntervals!.lines[index]!.rawMinutes,
           billableMinutes: chartIntervals!.lines[index]!.billableMinutes,
           overlapMinutes: chartIntervals!.lines[index]!.rawMinutes - chartIntervals!.lines[index]!.billableMinutes,

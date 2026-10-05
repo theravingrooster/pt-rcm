@@ -66,6 +66,46 @@ export const ptaCqModifierRule: Rule = Object.freeze<Rule>({
   },
 });
 
+/** The v5 policy uses minutes credited after interval union, including mixed PT/PTA care. */
+function ptaBillableMinutes(notes: string | null, billableMinutes: number): number {
+  if (!notes) return 0;
+  try {
+    const source = JSON.parse(notes) as unknown;
+    if (source === null || typeof source !== "object" || Array.isArray(source)
+      || !("source" in source) || source.source !== "SYNTHETIC_LOCKED_PT_NOTE"
+      || !("performer" in source) || source.performer !== "PTA") return 0;
+    if ("ptaBillableMinutes" in source) {
+      const minutes = source.ptaBillableMinutes;
+      return typeof minutes === "number" && Number.isSafeInteger(minutes) && minutes >= 0 && minutes <= billableMinutes
+        ? minutes : 0;
+    }
+    // Locked notes saved before v5 recorded only a whole-entry performer.
+    return billableMinutes;
+  } catch {
+    return 0;
+  }
+}
+
+export const ptaCqDeMinimisRule: Rule = Object.freeze<Rule>({
+  id: "pta-cq-modifier", version: 2,
+  description: "Add CQ to Medicare timed lines when PTA billable minutes exceed 10 percent of the line's billable minutes.",
+  evaluate(ctx): RuleResult {
+    if (ctx.payer.payerType !== "MEDICARE") return { outcome: "PASS" };
+    const linePatches = ctx.draftClaim.lines.flatMap((line, lineIndex) => {
+      const recorded = ctx.minuteLines[lineIndex];
+      if (!recorded?.timed || recorded.cptCode !== line.cptCode || recorded.minutes <= 0
+        || line.units <= 0 || line.modifiers.includes("CQ")) return [];
+      const ptaMinutes = ptaBillableMinutes(recorded.notes, recorded.minutes);
+      // Strictly greater: exactly two PTA minutes out of twenty is exempt.
+      return ptaMinutes * 10 > recorded.minutes ? [{ lineIndex, addModifiers: ["CQ" as const] }] : [];
+    });
+    return linePatches.length
+      ? { outcome: "DOWNGRADE", code: "MISSING_CQ",
+        message: "Add CQ where the PTA furnished more than 10 percent of a billed Medicare timed line.", linePatches }
+      : { outcome: "PASS" };
+  },
+});
+
 export const eightMinuteAppliedRule: Rule = Object.freeze<Rule>({
   id: "eight-minute-applied", version: 1, description: "Compare submitted timed units with the payer's timed-unit allocation.",
   evaluate(ctx): RuleResult {

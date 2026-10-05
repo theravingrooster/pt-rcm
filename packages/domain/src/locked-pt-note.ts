@@ -27,6 +27,13 @@ export const LockedPtNoteSchema = z.object({
     startTime: ChartTimestampSchema,
     stopTime: ChartTimestampSchema,
     performer: z.enum(["PT", "PTA"]).optional(),
+    // A PTA entry without intervals means the PTA furnished the whole entry.
+    // Explicit intervals locate the PTA's portion of a mixed PT/PTA entry;
+    // minutes are still derived from timestamps after overlap is removed.
+    ptaIntervals: z.array(z.object({
+      startTime: ChartTimestampSchema,
+      stopTime: ChartTimestampSchema,
+    }).strict()).min(1).optional(),
   }).strict()),
   untimedEntries: z.array(z.object({ cptCode: z.string() }).strict()).optional(),
 }).strict().superRefine((note, context) => {
@@ -68,6 +75,45 @@ export const LockedPtNoteSchema = z.object({
         message: "Timed entry duration must be whole minutes",
       });
     }
+    if (entry.ptaIntervals && entry.performer !== "PTA") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["timedEntries", index, "ptaIntervals"],
+        message: "PTA intervals require performer PTA; PT-performed entries have no PTA minutes",
+      });
+    }
+    const orderedPtaIntervals = (entry.ptaIntervals ?? []).map((interval, intervalIndex) => ({
+      ...interval,
+      intervalIndex,
+      start: Date.parse(interval.startTime),
+      stop: Date.parse(interval.stopTime),
+    })).sort((left, right) => left.start - right.start || left.stop - right.stop);
+    let previousStop = Number.NEGATIVE_INFINITY;
+    for (const interval of orderedPtaIntervals) {
+      const path = ["timedEntries", index, "ptaIntervals", interval.intervalIndex];
+      if (interval.start < Date.parse(entry.startTime) || interval.stop > Date.parse(entry.stopTime)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path,
+          message: "PTA interval must be contained in its timed entry",
+        });
+      }
+      if (interval.stop <= interval.start) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [...path, "stopTime"],
+          message: "PTA interval must have positive duration",
+        });
+      }
+      if (interval.start < previousStop) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path,
+          message: "PTA intervals must not overlap",
+        });
+      }
+      previousStop = Math.max(previousStop, interval.stop);
+    }
   }
   for (const [index, entry] of (note.untimedEntries ?? []).entries()) {
     const fixture = getCptFixture(entry.cptCode);
@@ -93,6 +139,7 @@ export type LockedPtNoteIntervalAnalysis = {
     performer: "PT" | "PTA";
     rawMinutes: number;
     billableMinutes: number;
+    ptaBillableMinutes: number;
   }>;
   rawTotalMinutes: number;
   billableUnionMinutes: number;
@@ -108,6 +155,7 @@ function analyzeValidatedIntervals(note: LockedPtNote): LockedPtNoteIntervalAnal
     performer: performer ?? "PT",
     rawMinutes: (Date.parse(stopTime) - Date.parse(startTime)) / 60_000,
     billableMinutes: 0,
+    ptaBillableMinutes: 0,
   }));
   const ordered = lines.map((line, index) => ({
     index,
@@ -123,6 +171,19 @@ function analyzeValidatedIntervals(note: LockedPtNote): LockedPtNoteIntervalAnal
     const additionalMs = Math.max(0, interval.stop - Math.max(interval.start, coveredThrough));
     const additionalMinutes = additionalMs / 60_000;
     lines[interval.index]!.billableMinutes = additionalMinutes;
+    const entry = note.timedEntries[interval.index]!;
+    if (entry.performer === "PTA") {
+      if (entry.ptaIntervals) {
+        const creditedStart = Math.max(interval.start, coveredThrough);
+        lines[interval.index]!.ptaBillableMinutes = entry.ptaIntervals.reduce((minutes, portion) => {
+          const intersectionMs = Math.max(0, Math.min(interval.stop, Date.parse(portion.stopTime))
+            - Math.max(creditedStart, Date.parse(portion.startTime)));
+          return minutes + intersectionMs / 60_000;
+        }, 0);
+      } else {
+        lines[interval.index]!.ptaBillableMinutes = additionalMinutes;
+      }
+    }
     billableUnionMinutes += additionalMinutes;
     coveredThrough = Math.max(coveredThrough, interval.stop);
   }

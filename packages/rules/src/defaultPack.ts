@@ -1,5 +1,5 @@
-import { ptPtaPack } from "./packVersioning.js";
+import { ptPtaDeMinimisPack } from "./packVersioning.js";
 
-export const defaultRulePack = ptPtaPack.rules;
-export const defaultRulePackVersion = ptPtaPack.version;
-export const defaultRulePackMode = ptPtaPack.mode;
+export const defaultRulePack = ptPtaDeMinimisPack.rules;
+export const defaultRulePackVersion = ptPtaDeMinimisPack.version;
+export const defaultRulePackMode = ptPtaDeMinimisPack.mode;

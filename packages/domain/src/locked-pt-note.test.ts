@@ -29,8 +29,8 @@ describe("locked synthetic PT note", () => {
       rawTotalMinutes: 40,
       billableUnionMinutes: 40,
       overlapMinutes: 0,
-      lines: [{ rawMinutes: 20, billableMinutes: 20, performer: "PT" },
-        { rawMinutes: 20, billableMinutes: 20, performer: "PT" }],
+      lines: [{ rawMinutes: 20, billableMinutes: 20, performer: "PT", ptaBillableMinutes: 0 },
+        { rawMinutes: 20, billableMinutes: 20, performer: "PT", ptaBillableMinutes: 0 }],
     });
     const result = lockedPtNoteToEncounterInput(note, context);
     expect(result).toMatchObject({
@@ -45,13 +45,66 @@ describe("locked synthetic PT note", () => {
     expect(allocation.totalUnits).toBe(3);
   });
 
-  it("preserves a PTA performer without altering recorded minutes or units", () => {
-    expect(analyzeLockedPtNoteIntervals(pta)).toMatchObject({ rawTotalMinutes: 20,
-      billableUnionMinutes: 20, lines: [{ cptCode: "97110", performer: "PTA", billableMinutes: 20 }] });
+  it("derives full and exactly 10 percent PTA portions from the fixture timestamps", () => {
+    expect(analyzeLockedPtNoteIntervals(pta)).toMatchObject({ rawTotalMinutes: 40,
+      billableUnionMinutes: 40, lines: [
+        { cptCode: "97110", performer: "PTA", billableMinutes: 20, ptaBillableMinutes: 20 },
+        { cptCode: "97140", performer: "PTA", billableMinutes: 20, ptaBillableMinutes: 2 },
+      ] });
     const encounter = lockedPtNoteToEncounterInput(pta, context);
-    expect(encounter.minuteLines).toEqual([{ cptCode: "97110", minutes: 20 }]);
+    expect(encounter.minuteLines).toEqual([{ cptCode: "97110", minutes: 20 }, { cptCode: "97140", minutes: 20 }]);
     expect(allocateUnits(encounter.minuteLines.map((line) => ({ ...line, timed: true })),
-      loadMedicareMinuteLadder()).totalUnits).toBe(1);
+      loadMedicareMinuteLadder()).totalUnits).toBe(3);
+  });
+
+  it("credits only PTA portions inside the billable union after overlapping minutes are removed", () => {
+    const mixedOverlap = { ...note, timedEntries: [
+      { cptCode: "97110", startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z", performer: "PT" },
+      { cptCode: "97140", startTime: "2026-10-01T09:10:00Z", stopTime: "2026-10-01T09:30:00Z", performer: "PTA",
+        ptaIntervals: [
+          { startTime: "2026-10-01T09:15:00Z", stopTime: "2026-10-01T09:18:00Z" },
+          { startTime: "2026-10-01T09:28:00Z", stopTime: "2026-10-01T09:29:00Z" },
+        ] },
+    ] };
+    expect(analyzeLockedPtNoteIntervals(mixedOverlap)).toMatchObject({
+      rawTotalMinutes: 40,
+      billableUnionMinutes: 30,
+      lines: [{ billableMinutes: 20, ptaBillableMinutes: 0 },
+        { billableMinutes: 10, ptaBillableMinutes: 1 }],
+    });
+    expect(lockedPtNoteToEncounterInput(mixedOverlap, context).minuteLines).toEqual([
+      { cptCode: "97110", minutes: 20 }, { cptCode: "97140", minutes: 10 },
+    ]);
+  });
+
+  it("derives a PTA portion greater than ten percent without changing a PT entry", () => {
+    const partial = { ...note, timedEntries: [
+      { ...note.timedEntries[0], performer: "PTA", ptaIntervals: [
+        { startTime: "2026-10-01T09:17:00Z", stopTime: "2026-10-01T09:20:00Z" },
+      ] },
+      note.timedEntries[1],
+    ] };
+    expect(analyzeLockedPtNoteIntervals(partial).lines).toMatchObject([
+      { performer: "PTA", billableMinutes: 20, ptaBillableMinutes: 3 },
+      { performer: "PT", billableMinutes: 20, ptaBillableMinutes: 0 },
+    ]);
+  });
+
+  it("rejects PTA portions on PT lines or outside and overlapping within their entry", () => {
+    const first = note.timedEntries[0]!;
+    const portion = { startTime: "2026-10-01T09:18:00Z", stopTime: "2026-10-01T09:20:00Z" };
+    const parsed = (entry: unknown) => LockedPtNoteSchema.safeParse({ ...note, timedEntries: [entry] });
+    expect(parsed({ ...first, performer: "PT", ptaIntervals: [portion] }).success).toBe(false);
+    expect(parsed({ ...first, ptaIntervals: [portion] }).success).toBe(false);
+    expect(parsed({ ...first, performer: "PTA", ptaIntervals: [
+      { startTime: "2026-10-01T09:18:00Z", stopTime: "2026-10-01T09:21:00Z" },
+    ] }).success).toBe(false);
+    expect(parsed({ ...first, performer: "PTA", ptaIntervals: [
+      portion, { startTime: "2026-10-01T09:19:00Z", stopTime: "2026-10-01T09:20:00Z" },
+    ] }).success).toBe(false);
+    expect(parsed({ ...first, performer: "PTA", ptaIntervals: [
+      { startTime: "2026-10-01T09:18:00Z", stopTime: "2026-10-01T09:18:00Z" },
+    ] }).success).toBe(false);
   });
 
   it("credits only the 30-minute union of overlapping intervals to encounter lines and the allocator", () => {
@@ -176,6 +229,7 @@ describe("locked synthetic PT note", () => {
     expect(LockedPtNoteSchema.safeParse({ ...note, patientName: "Actual Name" }).success).toBe(false);
     expect(LockedPtNoteSchema.safeParse({ ...note, memberId: "SYN-EXTRA" }).success).toBe(false);
     expect(LockedPtNoteSchema.safeParse({ ...note, timedEntries: [{ ...note.timedEntries[0], minutes: 19 }] }).success).toBe(false);
+    expect(LockedPtNoteSchema.safeParse({ ...note, timedEntries: [{ ...note.timedEntries[0], ptaMinutes: 2 }] }).success).toBe(false);
     expect(LockedPtNoteSchema.safeParse({ ...note, timedEntries: [{ ...note.timedEntries[0], units: 4 }] }).success).toBe(false);
   });
 

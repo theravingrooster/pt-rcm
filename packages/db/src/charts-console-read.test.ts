@@ -28,6 +28,11 @@ describe("locked chart timing read model", () => {
     expect(chartTimingForLine(JSON.stringify({ ...timing, performer: "PTA" }), noteId, 20))
       .toMatchObject({ performer: "PTA", rawMinutes: 20 });
     expect(chartTimingForLine(JSON.stringify({ ...timing, performer: "ASSISTANT" }), noteId, 20)).toBeNull();
+    expect(chartTimingForLine(JSON.stringify({ ...timing, performer: "PTA", rawMinutes: 20,
+      billableMinutes: 20, overlapMinutes: 0, ptaBillableMinutes: 2 }), noteId, 20))
+      .toMatchObject({ performer: "PTA", ptaBillableMinutes: 2 });
+    expect(chartTimingForLine(JSON.stringify({ ...timing, performer: "PT", rawMinutes: 20,
+      billableMinutes: 20, overlapMinutes: 0, ptaBillableMinutes: 2 }), noteId, 20)).toBeNull();
   });
 
   it.each([null, "not json", JSON.stringify({ ...timing, stopTime: "2026-10-01T08:40:00Z" }),
@@ -121,7 +126,7 @@ describe.skipIf(!url)("Charts read model with a locked shoulder note", () => {
     expect(row).toMatchObject({ noteId: lockedNoteId, status: "SCRUBBED", units: 3,
       rawMinutes: 40, billableUnionMinutes: 40, overlappingMinutes: 0 });
     expect(row.entries.map(({ cptCode, minutes }) => [cptCode, minutes])).toEqual([["97110", 20], ["97530", 20]]);
-    expect(row.entries[0]?.timing).toEqual({ startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z", rawMinutes: 20, performer: "PT" });
+    expect(row.entries[0]?.timing).toEqual({ startTime: "2026-10-01T09:00:00Z", stopTime: "2026-10-01T09:20:00Z", rawMinutes: 20, performer: "PT", ptaBillableMinutes: 0 });
     expect(row.entries.map(({ performer }) => performer)).toEqual(["PT", "PT"]);
     const detail = await getOperatorChart(connection.db, seedOrganization.id, encounterId);
     expect(detail?.allocation.totalUnits).toBe(3);
@@ -146,7 +151,8 @@ describe.skipIf(!url)("Charts read model with a locked shoulder note", () => {
     const rows = await listOperatorCharts(connection.db, seedOrganization.id);
     const pta = rows.find(({ encounter }) => encounter.id === ptaEncounterId)!;
     const shoulder = rows.find(({ encounter }) => encounter.id === encounterId)!;
-    expect(pta.entries.map(({ performer }) => performer)).toEqual(["PTA"]);
+    expect(pta.entries.map(({ performer, ptaBillableMinutes }) => [performer, ptaBillableMinutes]))
+      .toEqual([["PTA", 20], ["PTA", 2]]);
     expect(shoulder.entries.map(({ performer }) => performer)).toEqual(["PT", "PT"]);
     expect((await getOperatorChart(connection.db, seedOrganization.id, ptaEncounterId))?.entries[0]?.performer)
       .toBe("PTA");
